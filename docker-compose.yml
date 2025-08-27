@@ -1,0 +1,30 @@
+version: '3.8'
+
+services:
+  marzban-admin-bot:
+    build: .
+    container_name: marzban-admin-bot
+    restart: unless-stopped
+    environment:
+      - BOT_TOKEN=${BOT_TOKEN}
+      - MARZBAN_URL=${MARZBAN_URL}
+      - MARZBAN_USERNAME=${MARZBAN_USERNAME}
+      - MARZBAN_PASSWORD=${MARZBAN_PASSWORD}
+      - SUDO_ADMINS=${SUDO_ADMINS}
+      - MONITORING_INTERVAL=${MONITORING_INTERVAL:-600}
+      - WARNING_THRESHOLD=${WARNING_THRESHOLD:-0.8}
+      - DATABASE_PATH=/app/data/bot_database.db
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    healthcheck:
+      test: ["CMD", "python3", "health_check.py"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
