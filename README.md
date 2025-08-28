@@ -28,7 +28,7 @@
 ### روش ۱: با Docker (پیشنهادی و دائمی)
 1) کلون پروژه و ورود:
 ```bash
-git clone https://github.com/cheaterpersian-web/ADMIN.git
+git clone https://github.com/wings-iran/Wingmarz.git
 cd ADMIN
 ```
 2) فایل `.env` بسازید:
