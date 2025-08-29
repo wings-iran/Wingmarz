@@ -6,6 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 from typing import List
 import logging
 import asyncio
+from pathlib import Path
 import config
 from database import db
 from models.schemas import AdminModel, LogModel
@@ -30,6 +31,16 @@ class AddAdminStates(StatesGroup):
     waiting_for_traffic_volume = State()
     waiting_for_max_users = State()
     waiting_for_validity_period = State()
+    waiting_for_confirmation = State()
+
+
+class ImportAdminStates(StatesGroup):
+    waiting_for_admin_name = State()
+    waiting_for_marzban_username = State()
+    waiting_for_marzban_password = State()
+    waiting_for_traffic_volume = State()
+    waiting_for_validity_period = State()
+    waiting_for_max_users = State()
     waiting_for_confirmation = State()
 
 
@@ -95,6 +106,7 @@ def get_sudo_keyboard() -> InlineKeyboardMarkup:
         # Row 2: Settings and reports
         [
             InlineKeyboardButton(text="⚙️ تنظیمات", callback_data="sudo_menu_settings"),
+            InlineKeyboardButton(text=config.BUTTONS["backup_menu"], callback_data="sudo_menu_backup"),
             InlineKeyboardButton(text="📊 گزارشات", callback_data="sudo_menu_reports")
         ]
     ])
@@ -108,9 +120,151 @@ async def sudo_menu_panels(callback: CallbackQuery):
         [InlineKeyboardButton(text=config.BUTTONS["add_admin"], callback_data="add_admin"), InlineKeyboardButton(text=config.BUTTONS["remove_admin"], callback_data="remove_admin")],
         [InlineKeyboardButton(text=config.BUTTONS["edit_panel"], callback_data="edit_panel"), InlineKeyboardButton(text=config.BUTTONS["activate_admin"], callback_data="activate_admin")],
         [InlineKeyboardButton(text=config.BUTTONS["manage_admins"], callback_data="sudo_manage_admins")],
+        [InlineKeyboardButton(text=config.BUTTONS["import_admin"], callback_data="import_admin")],
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
     ])
     await callback.message.edit_text("🧩 مدیریت پنل‌ها:", reply_markup=kb)
+    await callback.answer()
+
+@sudo_router.callback_query(F.data == "import_admin")
+async def import_admin_entry(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    await state.clear()
+    await state.set_state(ImportAdminStates.waiting_for_admin_name)
+    await callback.message.edit_text(
+        "⬇️ افزودن ادمین قبلی\n\nیک نام نمایشی برای این پنل بفرستید (اختیاری، برای نمایش). اگر نمی‌خواهید، - بفرستید.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_panels")]])
+    )
+    await callback.answer()
+
+@sudo_router.message(ImportAdminStates.waiting_for_admin_name, F.text)
+async def import_admin_name(message: Message, state: FSMContext):
+    name = message.text.strip()
+    await state.update_data(admin_name=None if name == '-' else name)
+    await state.set_state(ImportAdminStates.waiting_for_marzban_username)
+    await message.answer("نام کاربری پنل در مرزبان را ارسال کنید:")
+
+@sudo_router.message(ImportAdminStates.waiting_for_marzban_username, F.text)
+async def import_admin_username(message: Message, state: FSMContext):
+    username = message.text.strip()
+    if not username:
+        await message.answer("نام کاربری معتبر نیست. دوباره بفرستید:")
+        return
+    await state.update_data(marzban_username=username)
+    await state.set_state(ImportAdminStates.waiting_for_marzban_password)
+    await message.answer("رمز عبور پنل در مرزبان را ارسال کنید:")
+
+@sudo_router.message(ImportAdminStates.waiting_for_marzban_password, F.text)
+async def import_admin_password(message: Message, state: FSMContext):
+    password = message.text.strip()
+    if not password:
+        await message.answer("رمز عبور معتبر نیست. دوباره بفرستید:")
+        return
+    await state.update_data(marzban_password=password)
+    await state.set_state(ImportAdminStates.waiting_for_traffic_volume)
+    await message.answer("محدودیت حجم (GB) را وارد کنید (مثلاً 100):")
+
+@sudo_router.message(ImportAdminStates.waiting_for_traffic_volume, F.text)
+async def import_admin_traffic(message: Message, state: FSMContext):
+    from utils.notify import gb_to_bytes
+    try:
+        gb = float(message.text.strip().replace(',', '.'))
+        if gb < 0:
+            raise ValueError()
+        await state.update_data(max_total_traffic=gb_to_bytes(gb))
+        await state.set_state(ImportAdminStates.waiting_for_validity_period)
+        await message.answer("محدودیت زمان (روز) را وارد کنید (مثلاً 30):")
+    except Exception:
+        await message.answer("فرمت حجم نامعتبر است. یک عدد مثل 100 وارد کنید:")
+
+@sudo_router.message(ImportAdminStates.waiting_for_validity_period, F.text)
+async def import_admin_time(message: Message, state: FSMContext):
+    from utils.notify import days_to_seconds
+    try:
+        days = int(message.text.strip())
+        if days <= 0:
+            raise ValueError()
+        await state.update_data(max_total_time=days_to_seconds(days), validity_days=days)
+        await state.set_state(ImportAdminStates.waiting_for_max_users)
+        await message.answer("حداکثر تعداد کاربران را وارد کنید (مثلاً 100):")
+    except Exception:
+        await message.answer("فرمت زمان نامعتبر است. یک عدد صحیح مثل 30 وارد کنید:")
+
+@sudo_router.message(ImportAdminStates.waiting_for_max_users, F.text)
+async def import_admin_max_users(message: Message, state: FSMContext):
+    try:
+        max_users = int(message.text.strip())
+        if max_users <= 0:
+            raise ValueError()
+        await state.update_data(max_users=max_users)
+        data = await state.get_data()
+        text = (
+            "✅ تایید افزودن ادمین قبلی\n\n"
+            f"نام: {data.get('admin_name') or '-'}\n"
+            f"نام کاربری مرزبان: {data.get('marzban_username')}\n"
+            f"کاربر: {max_users}\n"
+            f"حجم: {data.get('max_total_traffic')} بایت\n"
+            f"زمان: {data.get('validity_days')} روز\n\n"
+            "برای ادامه تایید کنید."
+        )
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ تایید و افزودن", callback_data="confirm_import_admin")],
+            [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_panels")]
+        ])
+        await state.set_state(ImportAdminStates.waiting_for_confirmation)
+        await message.answer(text, reply_markup=kb)
+    except Exception:
+        await message.answer("فرمت تعداد کاربران نامعتبر است. یک عدد صحیح وارد کنید:")
+
+@sudo_router.callback_query(F.data == "confirm_import_admin")
+async def confirm_import_admin(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    user_id = callback.from_user.id
+    data = await state.get_data()
+    await state.clear()
+    # Validate credentials by trying to fetch stats
+    try:
+        admin_api = await marzban_api.create_admin_api(data.get('marzban_username'), data.get('marzban_password'))
+        stats = await admin_api.get_admin_stats()
+    except Exception as e:
+        logger.error(f"Import admin auth failed: {e}")
+        await callback.message.edit_text("❌ اعتبارسنجی ناموفق. لطفاً اطلاعات را بررسی کنید.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_panels")]]))
+        await callback.answer()
+        return
+    # Save admin in DB
+    from models.schemas import AdminModel, UsageReportModel
+    from datetime import datetime
+    admin = AdminModel(
+        user_id=user_id,
+        admin_name=data.get('admin_name'),
+        marzban_username=data.get('marzban_username'),
+        marzban_password=data.get('marzban_password'),
+        max_users=data.get('max_users', 10),
+        max_total_time=data.get('max_total_time', 2592000),
+        max_total_traffic=data.get('max_total_traffic', 107374182400),
+        validity_days=data.get('validity_days', 30),
+        is_active=True,
+    )
+    ok = await db.add_admin(admin)
+    if not ok:
+        await callback.message.edit_text("❌ خطا در ذخیره ادمین.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_panels")]]))
+        await callback.answer()
+        return
+    # Store initial usage report from fetched stats
+    report = UsageReportModel(
+        admin_user_id=user_id,
+        check_time=datetime.utcnow(),
+        current_users=stats.total_users,
+        current_total_time=0,
+        current_total_traffic=stats.total_traffic_used,
+        users_data=None
+    )
+    await db.add_usage_report(report)
+    await callback.message.edit_text("✅ ادمین قبلی اضافه شد و مصرف فعلی ثبت شد.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_panels")]]))
     await callback.answer()
 
 @sudo_router.callback_query(F.data == "sudo_menu_cleanup")
@@ -154,6 +308,177 @@ async def sudo_menu_settings(callback: CallbackQuery):
     ])
     await callback.message.edit_text("⚙️ تنظیمات:", reply_markup=kb)
     await callback.answer()
+
+@sudo_router.callback_query(F.data == "sudo_menu_backup")
+async def sudo_menu_backup(callback: CallbackQuery):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=config.BUTTONS["backup_now"], callback_data="backup_now")],
+        [InlineKeyboardButton(text=config.BUTTONS["backup_schedule"], callback_data="backup_schedule")],
+        [InlineKeyboardButton(text=config.BUTTONS["backup_restore"], callback_data="backup_restore")],
+        [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
+    ])
+    await callback.message.edit_text("🗄️ مدیریت بکاپ:", reply_markup=kb)
+    await callback.answer()
+
+@sudo_router.callback_query(F.data == "backup_now")
+async def backup_now(callback: CallbackQuery):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    await callback.answer("در حال ساخت بکاپ...", show_alert=False)
+    try:
+        from utils.backup import create_backup_zip
+        path = await create_backup_zip()
+        await callback.message.answer(config.MESSAGES["backup_created"]) 
+        try:
+            # aiogram supports file paths as input file by passing open() file object
+            p = Path(str(path))
+            if p.exists():
+                await callback.message.bot.send_document(chat_id=callback.from_user.id, document=open(p, 'rb'), caption=f"بکاپ: {p.name}")
+            else:
+                await callback.message.bot.send_document(chat_id=callback.from_user.id, document=str(path), caption=f"بکاپ: {p.name}")
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"Backup creation failed: {e}")
+        await callback.message.answer(config.MESSAGES["backup_failed"]) 
+
+    # Return to backup menu
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=config.BUTTONS["backup_now"], callback_data="backup_now")],
+        [InlineKeyboardButton(text=config.BUTTONS["backup_schedule"], callback_data="backup_schedule")],
+        [InlineKeyboardButton(text=config.BUTTONS["backup_restore"], callback_data="backup_restore")],
+        [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
+    ])
+    try:
+        await callback.message.answer("🗄️ مدیریت بکاپ:", reply_markup=kb)
+    except Exception:
+        pass
+
+class BackupRestoreStates(StatesGroup):
+    waiting_for_file = State()
+
+@sudo_router.callback_query(F.data == "backup_restore")
+async def backup_restore_entry(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    await state.set_state(BackupRestoreStates.waiting_for_file)
+    await callback.message.edit_text(
+        "♻️ ریستور بکاپ\n\nفایل زیپ بکاپ را همین‌جا ارسال کنید. فقط فایل‌های زیپ ساخته‌شده توسط ربات پشتیبانی می‌شود.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_backup")]])
+    )
+    await callback.answer()
+
+@sudo_router.message(BackupRestoreStates.waiting_for_file)
+async def backup_restore_receive(message: Message, state: FSMContext):
+    if message.from_user.id not in config.SUDO_ADMINS:
+        return
+    if not message.document or not (message.document.file_name or '').lower().endswith('.zip'):
+        await message.answer("لطفاً یک فایل ZIP معتبر ارسال کنید.")
+        return
+    # Download file to /app/data (or CWD fallback)
+    try:
+        from aiogram.types import FSInputFile
+        from pathlib import Path
+        import zipfile
+        import asyncio
+        # Create download path
+        target_dir = Path(config.DATABASE_PATH).resolve().parent
+        target_dir.mkdir(parents=True, exist_ok=True)
+        local_zip = target_dir / f"restore-{message.document.file_name}"
+
+        file = await message.bot.get_file(message.document.file_id)
+        file_path = file.file_path
+        # Download via bot API
+        await message.bot.download_file(file_path, destination=str(local_zip))
+
+        # Extract and replace DB
+        with zipfile.ZipFile(local_zip, 'r') as zf:
+            members = zf.namelist()
+            # Prefer exact DB file
+            db_rel = Path(config.DATABASE_PATH).name
+            db_member = None
+            for m in members:
+                if m.endswith(db_rel):
+                    db_member = m
+                    break
+            if not db_member:
+                # Try common names
+                for m in members:
+                    if m.endswith('bot_database.db'):
+                        db_member = m
+                        break
+            if not db_member:
+                await message.answer("❌ فایل دیتابیس در بکاپ پیدا نشد.")
+                await state.clear()
+                return
+            extract_tmp = target_dir / "_restore_tmp.db"
+            with zf.open(db_member, 'r') as src, open(extract_tmp, 'wb') as dst:
+                dst.write(src.read())
+
+        # Replace existing DB (backup current)
+        db_path = Path(config.DATABASE_PATH).resolve()
+        backup_old = db_path.with_suffix('.db.bak') if db_path.suffix else Path(str(db_path) + '.bak')
+        try:
+            if db_path.exists():
+                db_path.replace(backup_old)
+        except Exception:
+            pass
+        extract_tmp.replace(db_path)
+        await message.answer("✅ ریستور انجام شد. ربات تا چند لحظه دیگر با داده‌های جدید کار می‌کند.")
+        await state.clear()
+        # Optional: instruct user to restart container/service if needed
+        await message.answer("در صورت اجرای دائمی، برای اطمینان می‌توانید سرویس را ری‌استارت کنید.")
+    except Exception as e:
+        logger.error(f"Restore failed: {e}")
+        await message.answer("❌ خطا در ریستور بکاپ.")
+        await state.clear()
+
+class BackupScheduleStates(StatesGroup):
+    waiting_input = State()
+
+@sudo_router.callback_query(F.data == "backup_schedule")
+async def backup_schedule_entry(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    text = (
+        "⏱️ زمان‌بندی بکاپ\n\n"
+        "- برای فعال‌سازی بکاپ ساعتی، عدد 1h را بفرستید.\n"
+        "- برای غیرفعالسازی، عبارت off را بفرستید.\n"
+        "(در حال حاضر فقط هر ساعت پشتیبانی می‌شود)"
+    )
+    await state.set_state(BackupScheduleStates.waiting_input)
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_backup")]]))
+    await callback.answer()
+
+@sudo_router.message(BackupScheduleStates.waiting_input, F.text)
+async def backup_schedule_set(message: Message, state: FSMContext):
+    txt = message.text.strip().lower()
+    from scheduler import scheduler
+    if txt in ("off", "0", "disable", "stop"):
+        ok = scheduler.disable_backup_schedule() if scheduler else False
+        if ok:
+            await db.set_setting("backup_schedule", "off")
+            await message.answer(config.MESSAGES["backup_schedule_disabled"]) 
+        else:
+            await message.answer("❌ خطا در غیرفعالسازی زمان‌بندی.")
+        await state.clear()
+        return
+    if txt in ("1h", "hour", "hourly"):
+        ok = scheduler.schedule_backup_every_hour() if scheduler else False
+        if ok:
+            await db.set_setting("backup_schedule", "1h")
+            await message.answer(config.MESSAGES["backup_schedule_saved"]) 
+        else:
+            await message.answer("❌ خطا در ذخیره زمان‌بندی.")
+        await state.clear()
+        return
+    await message.answer("فرمت نامعتبر. فقط '1h' یا 'off' مجاز است.")
 
 @sudo_router.callback_query(F.data == "sudo_menu_reports")
 async def sudo_menu_reports(callback: CallbackQuery):

@@ -4,6 +4,7 @@ from datetime import datetime
 from typing import List, Dict
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from apscheduler.triggers.cron import CronTrigger
 
 import config
 from database import db
@@ -17,6 +18,7 @@ class MonitoringScheduler:
         self.bot = bot
         self.scheduler = AsyncIOScheduler()
         self.is_running = False
+        self.backup_job_id = "bot_backup_job"
 
     async def check_admin_limits(self, admin_user_id: int) -> LimitCheckResult:
         admin = await db.get_admin(admin_user_id)
@@ -261,6 +263,53 @@ class MonitoringScheduler:
         print(f"Monitoring scheduler started. Will check every {config.MONITORING_INTERVAL} seconds.")
 
         await self.monitor_all_admins()
+
+    async def send_backup(self):
+        try:
+            from utils.backup import create_backup_zip
+            path = await create_backup_zip()
+            for sudo_id in config.SUDO_ADMINS:
+                try:
+                    from pathlib import Path
+                    p = Path(str(path))
+                    if p.exists():
+                        await self.bot.send_document(chat_id=sudo_id, document=open(p, 'rb'), caption=f"بکاپ خودکار: {p.name}")
+                    else:
+                        await self.bot.send_document(chat_id=sudo_id, document=str(path), caption=f"بکاپ خودکار: {p.name}")
+                except Exception:
+                    pass
+        except Exception as e:
+            print(f"Error creating/sending backup: {e}")
+
+    def schedule_backup_every_hour(self):
+        try:
+            # Remove existing job if any
+            job = self.scheduler.get_job(self.backup_job_id)
+            if job:
+                self.scheduler.remove_job(self.backup_job_id)
+            # Schedule hourly at minute 0
+            self.scheduler.add_job(
+                self.send_backup,
+                trigger=CronTrigger(minute=0),
+                id=self.backup_job_id,
+                name="Hourly Bot Backup",
+                replace_existing=True,
+                max_instances=1
+            )
+            return True
+        except Exception as e:
+            print(f"Error scheduling hourly backup: {e}")
+            return False
+
+    def disable_backup_schedule(self):
+        try:
+            job = self.scheduler.get_job(self.backup_job_id)
+            if job:
+                self.scheduler.remove_job(self.backup_job_id)
+            return True
+        except Exception as e:
+            print(f"Error disabling backup schedule: {e}")
+            return False
 
     async def stop(self):
         if not self.is_running:
