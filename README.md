@@ -29,7 +29,7 @@
 1) کلون پروژه و ورود:
 ```bash
 git clone https://github.com/wings-iran/Wingmarz.git
-cd ADMIN
+cd Wingmarz
 ```
 2) فایل `.env` بسازید:
 ```bash
