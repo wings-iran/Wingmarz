@@ -317,6 +317,7 @@ async def sudo_menu_backup(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=config.BUTTONS["backup_now"], callback_data="backup_now")],
         [InlineKeyboardButton(text=config.BUTTONS["backup_schedule"], callback_data="backup_schedule")],
+        [InlineKeyboardButton(text=config.BUTTONS["backup_restore"], callback_data="backup_restore")],
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
     ])
     await callback.message.edit_text("🗄️ مدیریت بکاپ:", reply_markup=kb)
@@ -349,12 +350,93 @@ async def backup_now(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text=config.BUTTONS["backup_now"], callback_data="backup_now")],
         [InlineKeyboardButton(text=config.BUTTONS["backup_schedule"], callback_data="backup_schedule")],
+        [InlineKeyboardButton(text=config.BUTTONS["backup_restore"], callback_data="backup_restore")],
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
     ])
     try:
         await callback.message.answer("🗄️ مدیریت بکاپ:", reply_markup=kb)
     except Exception:
         pass
+
+class BackupRestoreStates(StatesGroup):
+    waiting_for_file = State()
+
+@sudo_router.callback_query(F.data == "backup_restore")
+async def backup_restore_entry(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    await state.set_state(BackupRestoreStates.waiting_for_file)
+    await callback.message.edit_text(
+        "♻️ ریستور بکاپ\n\nفایل زیپ بکاپ را همین‌جا ارسال کنید. فقط فایل‌های زیپ ساخته‌شده توسط ربات پشتیبانی می‌شود.",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_backup")]])
+    )
+    await callback.answer()
+
+@sudo_router.message(BackupRestoreStates.waiting_for_file)
+async def backup_restore_receive(message: Message, state: FSMContext):
+    if message.from_user.id not in config.SUDO_ADMINS:
+        return
+    if not message.document or not (message.document.file_name or '').lower().endswith('.zip'):
+        await message.answer("لطفاً یک فایل ZIP معتبر ارسال کنید.")
+        return
+    # Download file to /app/data (or CWD fallback)
+    try:
+        from aiogram.types import FSInputFile
+        from pathlib import Path
+        import zipfile
+        import asyncio
+        # Create download path
+        target_dir = Path(config.DATABASE_PATH).resolve().parent
+        target_dir.mkdir(parents=True, exist_ok=True)
+        local_zip = target_dir / f"restore-{message.document.file_name}"
+
+        file = await message.bot.get_file(message.document.file_id)
+        file_path = file.file_path
+        # Download via bot API
+        await message.bot.download_file(file_path, destination=str(local_zip))
+
+        # Extract and replace DB
+        with zipfile.ZipFile(local_zip, 'r') as zf:
+            members = zf.namelist()
+            # Prefer exact DB file
+            db_rel = Path(config.DATABASE_PATH).name
+            db_member = None
+            for m in members:
+                if m.endswith(db_rel):
+                    db_member = m
+                    break
+            if not db_member:
+                # Try common names
+                for m in members:
+                    if m.endswith('bot_database.db'):
+                        db_member = m
+                        break
+            if not db_member:
+                await message.answer("❌ فایل دیتابیس در بکاپ پیدا نشد.")
+                await state.clear()
+                return
+            extract_tmp = target_dir / "_restore_tmp.db"
+            with zf.open(db_member, 'r') as src, open(extract_tmp, 'wb') as dst:
+                dst.write(src.read())
+
+        # Replace existing DB (backup current)
+        db_path = Path(config.DATABASE_PATH).resolve()
+        backup_old = db_path.with_suffix('.db.bak') if db_path.suffix else Path(str(db_path) + '.bak')
+        try:
+            if db_path.exists():
+                db_path.replace(backup_old)
+        except Exception:
+            pass
+        extract_tmp.replace(db_path)
+        await message.answer("✅ ریستور انجام شد. ربات تا چند لحظه دیگر با داده‌های جدید کار می‌کند.")
+        await state.clear()
+        # Optional: instruct user to restart container/service if needed
+        await message.answer("در صورت اجرای دائمی، برای اطمینان می‌توانید سرویس را ری‌استارت کنید.")
+    except Exception as e:
+        logger.error(f"Restore failed: {e}")
+        await message.answer("❌ خطا در ریستور بکاپ.")
+        await state.clear()
 
 class BackupScheduleStates(StatesGroup):
     waiting_input = State()
