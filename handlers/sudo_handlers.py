@@ -6,6 +6,7 @@ from aiogram.fsm.state import State, StatesGroup
 from typing import List
 import logging
 import asyncio
+from pathlib import Path
 import config
 from database import db
 from models.schemas import AdminModel, LogModel
@@ -95,6 +96,7 @@ def get_sudo_keyboard() -> InlineKeyboardMarkup:
         # Row 2: Settings and reports
         [
             InlineKeyboardButton(text="⚙️ تنظیمات", callback_data="sudo_menu_settings"),
+            InlineKeyboardButton(text=config.BUTTONS["backup_menu"], callback_data="sudo_menu_backup"),
             InlineKeyboardButton(text="📊 گزارشات", callback_data="sudo_menu_reports")
         ]
     ])
@@ -154,6 +156,95 @@ async def sudo_menu_settings(callback: CallbackQuery):
     ])
     await callback.message.edit_text("⚙️ تنظیمات:", reply_markup=kb)
     await callback.answer()
+
+@sudo_router.callback_query(F.data == "sudo_menu_backup")
+async def sudo_menu_backup(callback: CallbackQuery):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=config.BUTTONS["backup_now"], callback_data="backup_now")],
+        [InlineKeyboardButton(text=config.BUTTONS["backup_schedule"], callback_data="backup_schedule")],
+        [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
+    ])
+    await callback.message.edit_text("🗄️ مدیریت بکاپ:", reply_markup=kb)
+    await callback.answer()
+
+@sudo_router.callback_query(F.data == "backup_now")
+async def backup_now(callback: CallbackQuery):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    await callback.answer("در حال ساخت بکاپ...", show_alert=False)
+    try:
+        from utils.backup import create_backup_zip
+        path = await create_backup_zip()
+        await callback.message.answer(config.MESSAGES["backup_created"]) 
+        try:
+            # aiogram supports file paths as input file by passing open() file object
+            p = Path(str(path))
+            if p.exists():
+                await callback.message.bot.send_document(chat_id=callback.from_user.id, document=open(p, 'rb'), caption=f"بکاپ: {p.name}")
+            else:
+                await callback.message.bot.send_document(chat_id=callback.from_user.id, document=str(path), caption=f"بکاپ: {p.name}")
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"Backup creation failed: {e}")
+        await callback.message.answer(config.MESSAGES["backup_failed"]) 
+
+    # Return to backup menu
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=config.BUTTONS["backup_now"], callback_data="backup_now")],
+        [InlineKeyboardButton(text=config.BUTTONS["backup_schedule"], callback_data="backup_schedule")],
+        [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
+    ])
+    try:
+        await callback.message.answer("🗄️ مدیریت بکاپ:", reply_markup=kb)
+    except Exception:
+        pass
+
+class BackupScheduleStates(StatesGroup):
+    waiting_input = State()
+
+@sudo_router.callback_query(F.data == "backup_schedule")
+async def backup_schedule_entry(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    text = (
+        "⏱️ زمان‌بندی بکاپ\n\n"
+        "- برای فعال‌سازی بکاپ ساعتی، عدد 1h را بفرستید.\n"
+        "- برای غیرفعالسازی، عبارت off را بفرستید.\n"
+        "(در حال حاضر فقط هر ساعت پشتیبانی می‌شود)"
+    )
+    await state.set_state(BackupScheduleStates.waiting_input)
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_backup")]]))
+    await callback.answer()
+
+@sudo_router.message(BackupScheduleStates.waiting_input, F.text)
+async def backup_schedule_set(message: Message, state: FSMContext):
+    txt = message.text.strip().lower()
+    from scheduler import scheduler
+    if txt in ("off", "0", "disable", "stop"):
+        ok = scheduler.disable_backup_schedule() if scheduler else False
+        if ok:
+            await db.set_setting("backup_schedule", "off")
+            await message.answer(config.MESSAGES["backup_schedule_disabled"]) 
+        else:
+            await message.answer("❌ خطا در غیرفعالسازی زمان‌بندی.")
+        await state.clear()
+        return
+    if txt in ("1h", "hour", "hourly"):
+        ok = scheduler.schedule_backup_every_hour() if scheduler else False
+        if ok:
+            await db.set_setting("backup_schedule", "1h")
+            await message.answer(config.MESSAGES["backup_schedule_saved"]) 
+        else:
+            await message.answer("❌ خطا در ذخیره زمان‌بندی.")
+        await state.clear()
+        return
+    await message.answer("فرمت نامعتبر. فقط '1h' یا 'off' مجاز است.")
 
 @sudo_router.callback_query(F.data == "sudo_menu_reports")
 async def sudo_menu_reports(callback: CallbackQuery):

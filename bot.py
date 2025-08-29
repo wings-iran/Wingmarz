@@ -92,6 +92,13 @@ class MarzbanAdminBot:
         
         # Initialize scheduler
         self.scheduler = init_scheduler(self.bot)
+        try:
+            # Restore backup schedule setting on startup
+            val = await db.get_setting("backup_schedule")
+            if val and val.lower() in ("1h", "hour", "hourly"):
+                self.scheduler.schedule_backup_every_hour()
+        except Exception as _e:
+            logger.warning(f"Could not restore backup schedule: {_e}")
         
         logger.info("Bot setup completed")
 
