@@ -1,5 +1,6 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import FSInputFile
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -334,14 +335,11 @@ async def backup_now(callback: CallbackQuery):
         path = await create_backup_zip()
         await callback.message.answer(config.MESSAGES["backup_created"]) 
         try:
-            # aiogram supports file paths as input file by passing open() file object
             p = Path(str(path))
-            if p.exists():
-                await callback.message.bot.send_document(chat_id=callback.from_user.id, document=open(p, 'rb'), caption=f"بکاپ: {p.name}")
-            else:
-                await callback.message.bot.send_document(chat_id=callback.from_user.id, document=str(path), caption=f"بکاپ: {p.name}")
-        except Exception:
-            pass
+            await callback.message.answer_document(document=FSInputFile(str(p)), caption=f"بکاپ: {p.name}")
+        except Exception as send_err:
+            logger.error(f"Failed to send backup file {p}: {send_err}")
+            await callback.message.answer("❌ خطا در ارسال فایل بکاپ.")
     except Exception as e:
         logger.error(f"Backup creation failed: {e}")
         await callback.message.answer(config.MESSAGES["backup_failed"]) 
@@ -391,10 +389,9 @@ async def backup_restore_receive(message: Message, state: FSMContext):
         target_dir.mkdir(parents=True, exist_ok=True)
         local_zip = target_dir / f"restore-{message.document.file_name}"
 
+        # Download via bot API (aiogram v3)
         file = await message.bot.get_file(message.document.file_id)
-        file_path = file.file_path
-        # Download via bot API
-        await message.bot.download_file(file_path, destination=str(local_zip))
+        await message.bot.download(file, destination=str(local_zip))
 
         # Extract and replace DB
         with zipfile.ZipFile(local_zip, 'r') as zf:
