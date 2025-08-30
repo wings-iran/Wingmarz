@@ -1,5 +1,6 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.types import FSInputFile
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -117,10 +118,10 @@ async def sudo_menu_panels(callback: CallbackQuery):
         await callback.answer("غیرمجاز", show_alert=True)
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=config.BUTTONS["add_admin"], callback_data="add_admin"), InlineKeyboardButton(text=config.BUTTONS["remove_admin"], callback_data="remove_admin")],
-        [InlineKeyboardButton(text=config.BUTTONS["edit_panel"], callback_data="edit_panel"), InlineKeyboardButton(text=config.BUTTONS["activate_admin"], callback_data="activate_admin")],
-        [InlineKeyboardButton(text=config.BUTTONS["manage_admins"], callback_data="sudo_manage_admins")],
+        [InlineKeyboardButton(text=config.BUTTONS["add_admin"], callback_data="add_admin"), InlineKeyboardButton(text=config.BUTTONS["edit_panel"], callback_data="edit_panel")],
+        [InlineKeyboardButton(text=config.BUTTONS["activate_admin"], callback_data="activate_admin"), InlineKeyboardButton(text=config.BUTTONS["manage_admins"], callback_data="sudo_manage_admins")],
         [InlineKeyboardButton(text=config.BUTTONS["import_admin"], callback_data="import_admin")],
+        [InlineKeyboardButton(text=config.BUTTONS["remove_admin"], callback_data="remove_admin")],
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
     ])
     await callback.message.edit_text("🧩 مدیریت پنل‌ها:", reply_markup=kb)
@@ -273,8 +274,7 @@ async def sudo_menu_cleanup(callback: CallbackQuery):
         await callback.answer("غیرمجاز", show_alert=True)
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=config.BUTTONS["cleanup_old_expired"], callback_data="sudo_cleanup_old_expired")],
-        [InlineKeyboardButton(text=config.BUTTONS["cleanup_small_quota"], callback_data="sudo_cleanup_small_quota")],
+        [InlineKeyboardButton(text=config.BUTTONS["cleanup_old_expired"], callback_data="sudo_cleanup_old_expired"), InlineKeyboardButton(text=config.BUTTONS["cleanup_small_quota"], callback_data="sudo_cleanup_small_quota")],
         [InlineKeyboardButton(text=config.BUTTONS["reset_usage"], callback_data="sudo_reset_usage")],
         [InlineKeyboardButton(text=config.BUTTONS["non_payer"], callback_data="sudo_non_payer")],
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
@@ -289,8 +289,7 @@ async def sudo_menu_sales(callback: CallbackQuery):
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 مدیریت فروش", callback_data="sales_manage")],
-        [InlineKeyboardButton(text=config.BUTTONS["sales_cards"], callback_data="sales_cards")],
-        [InlineKeyboardButton(text=config.BUTTONS["set_billing"], callback_data="set_billing")],
+        [InlineKeyboardButton(text=config.BUTTONS["sales_cards"], callback_data="sales_cards"), InlineKeyboardButton(text=config.BUTTONS["set_billing"], callback_data="set_billing")],
         [InlineKeyboardButton(text=config.BUTTONS["set_login_url"], callback_data="set_login_url")],
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
     ])
@@ -315,8 +314,7 @@ async def sudo_menu_backup(callback: CallbackQuery):
         await callback.answer("غیرمجاز", show_alert=True)
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=config.BUTTONS["backup_now"], callback_data="backup_now")],
-        [InlineKeyboardButton(text=config.BUTTONS["backup_schedule"], callback_data="backup_schedule")],
+        [InlineKeyboardButton(text=config.BUTTONS["backup_now"], callback_data="backup_now"), InlineKeyboardButton(text=config.BUTTONS["backup_schedule"], callback_data="backup_schedule")],
         [InlineKeyboardButton(text=config.BUTTONS["backup_restore"], callback_data="backup_restore")],
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
     ])
@@ -334,14 +332,11 @@ async def backup_now(callback: CallbackQuery):
         path = await create_backup_zip()
         await callback.message.answer(config.MESSAGES["backup_created"]) 
         try:
-            # aiogram supports file paths as input file by passing open() file object
             p = Path(str(path))
-            if p.exists():
-                await callback.message.bot.send_document(chat_id=callback.from_user.id, document=open(p, 'rb'), caption=f"بکاپ: {p.name}")
-            else:
-                await callback.message.bot.send_document(chat_id=callback.from_user.id, document=str(path), caption=f"بکاپ: {p.name}")
-        except Exception:
-            pass
+            await callback.message.answer_document(document=FSInputFile(str(p)), caption=f"بکاپ: {p.name}")
+        except Exception as send_err:
+            logger.error(f"Failed to send backup file {p}: {send_err}")
+            await callback.message.answer("❌ خطا در ارسال فایل بکاپ.")
     except Exception as e:
         logger.error(f"Backup creation failed: {e}")
         await callback.message.answer(config.MESSAGES["backup_failed"]) 
@@ -391,10 +386,9 @@ async def backup_restore_receive(message: Message, state: FSMContext):
         target_dir.mkdir(parents=True, exist_ok=True)
         local_zip = target_dir / f"restore-{message.document.file_name}"
 
+        # Download via bot API (aiogram v3)
         file = await message.bot.get_file(message.document.file_id)
-        file_path = file.file_path
-        # Download via bot API
-        await message.bot.download_file(file_path, destination=str(local_zip))
+        await message.bot.download(file, destination=str(local_zip))
 
         # Extract and replace DB
         with zipfile.ZipFile(local_zip, 'r') as zf:
@@ -2347,6 +2341,11 @@ async def activate_panel_selected(callback: CallbackQuery):
         password_restored = False
         if db_success and admin.original_password:
             password_restored = await restore_admin_password_and_update_db(admin.id, admin.original_password)
+            # Give Marzban a brief moment to apply password change
+            try:
+                await asyncio.sleep(0.5)
+            except Exception:
+                pass
         users_reactivated = 0
         try:
             users_reactivated = await reactivate_admin_panel_users(admin.id)
@@ -2511,9 +2510,19 @@ async def reactivate_admin_panel_users(admin_id: int) -> int:
             logger.warning(f"No marzban username found for admin panel {admin_id}")
             return 0
         
-        # Get admin's users from Marzban using admin's credentials
-        admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
-        users = await admin_api.get_users()
+        users = []
+        # Try via admin API first (uses panel credentials)
+        try:
+            admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
+            users = await admin_api.get_users()
+        except Exception as e:
+            logger.warning(f"reactivate_admin_panel_users: admin API path failed for {admin.marzban_username}: {e}")
+            # Fallback: use main API to get users of this admin
+            try:
+                users = await marzban_api.get_admin_users(admin.marzban_username)
+            except Exception as e2:
+                logger.error(f"reactivate_admin_panel_users: main API fallback failed for {admin.marzban_username}: {e2}")
+                users = []
         
         reactivated_count = 0
         for user in users:
@@ -2870,7 +2879,7 @@ async def manage_panel_selected(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="ℹ️ اطلاعات", callback_data=f"manage_action_info_{admin.id}")],
         [InlineKeyboardButton(text="🔄 فعالسازی", callback_data=f"manage_action_activate_{admin.id}"), InlineKeyboardButton(text="⛔ غیرفعالسازی", callback_data=f"manage_action_deactivate_{admin.id}")],
-        [InlineKeyboardButton(text="🗑️ حذف پنل", callback_data=f"manage_action_delete_{admin.id}")],
+        [InlineKeyboardButton(text=config.BUTTONS["remove_admin"], callback_data=f"manage_action_delete_{admin.id}")],
         [InlineKeyboardButton(text="♻️ ریست زمان", callback_data=f"manage_action_reset_time_{admin.id}"), InlineKeyboardButton(text="♻️ ریست حجم", callback_data=f"manage_action_reset_traffic_{admin.id}")],
         [InlineKeyboardButton(text="👥 تعداد کاربر", callback_data=f"manage_action_users_{admin.id}")],
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_manage_admins")]
@@ -2948,6 +2957,11 @@ async def manage_action_activate(callback: CallbackQuery):
         password_restored = False
         if db_success and admin.original_password:
             password_restored = await restore_admin_password_and_update_db(admin.id, admin.original_password)
+            # Give Marzban a brief moment to apply password change
+            try:
+                await asyncio.sleep(0.5)
+            except Exception:
+                pass
         users_reactivated = 0
         try:
             users_reactivated = await reactivate_admin_panel_users(admin.id)
