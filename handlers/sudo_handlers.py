@@ -118,10 +118,10 @@ async def sudo_menu_panels(callback: CallbackQuery):
         await callback.answer("غیرمجاز", show_alert=True)
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=config.BUTTONS["add_admin"], callback_data="add_admin"), InlineKeyboardButton(text=config.BUTTONS["remove_admin"], callback_data="remove_admin")],
-        [InlineKeyboardButton(text=config.BUTTONS["edit_panel"], callback_data="edit_panel"), InlineKeyboardButton(text=config.BUTTONS["activate_admin"], callback_data="activate_admin")],
-        [InlineKeyboardButton(text=config.BUTTONS["manage_admins"], callback_data="sudo_manage_admins")],
+        [InlineKeyboardButton(text=config.BUTTONS["add_admin"], callback_data="add_admin"), InlineKeyboardButton(text=config.BUTTONS["edit_panel"], callback_data="edit_panel")],
+        [InlineKeyboardButton(text=config.BUTTONS["activate_admin"], callback_data="activate_admin"), InlineKeyboardButton(text=config.BUTTONS["manage_admins"], callback_data="sudo_manage_admins")],
         [InlineKeyboardButton(text=config.BUTTONS["import_admin"], callback_data="import_admin")],
+        [InlineKeyboardButton(text=config.BUTTONS["remove_admin"], callback_data="remove_admin")],
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
     ])
     await callback.message.edit_text("🧩 مدیریت پنل‌ها:", reply_markup=kb)
@@ -274,8 +274,7 @@ async def sudo_menu_cleanup(callback: CallbackQuery):
         await callback.answer("غیرمجاز", show_alert=True)
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=config.BUTTONS["cleanup_old_expired"], callback_data="sudo_cleanup_old_expired")],
-        [InlineKeyboardButton(text=config.BUTTONS["cleanup_small_quota"], callback_data="sudo_cleanup_small_quota")],
+        [InlineKeyboardButton(text=config.BUTTONS["cleanup_old_expired"], callback_data="sudo_cleanup_old_expired"), InlineKeyboardButton(text=config.BUTTONS["cleanup_small_quota"], callback_data="sudo_cleanup_small_quota")],
         [InlineKeyboardButton(text=config.BUTTONS["reset_usage"], callback_data="sudo_reset_usage")],
         [InlineKeyboardButton(text=config.BUTTONS["non_payer"], callback_data="sudo_non_payer")],
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
@@ -290,8 +289,7 @@ async def sudo_menu_sales(callback: CallbackQuery):
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🛒 مدیریت فروش", callback_data="sales_manage")],
-        [InlineKeyboardButton(text=config.BUTTONS["sales_cards"], callback_data="sales_cards")],
-        [InlineKeyboardButton(text=config.BUTTONS["set_billing"], callback_data="set_billing")],
+        [InlineKeyboardButton(text=config.BUTTONS["sales_cards"], callback_data="sales_cards"), InlineKeyboardButton(text=config.BUTTONS["set_billing"], callback_data="set_billing")],
         [InlineKeyboardButton(text=config.BUTTONS["set_login_url"], callback_data="set_login_url")],
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
     ])
@@ -316,8 +314,7 @@ async def sudo_menu_backup(callback: CallbackQuery):
         await callback.answer("غیرمجاز", show_alert=True)
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=config.BUTTONS["backup_now"], callback_data="backup_now")],
-        [InlineKeyboardButton(text=config.BUTTONS["backup_schedule"], callback_data="backup_schedule")],
+        [InlineKeyboardButton(text=config.BUTTONS["backup_now"], callback_data="backup_now"), InlineKeyboardButton(text=config.BUTTONS["backup_schedule"], callback_data="backup_schedule")],
         [InlineKeyboardButton(text=config.BUTTONS["backup_restore"], callback_data="backup_restore")],
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
     ])
@@ -2882,7 +2879,7 @@ async def manage_panel_selected(callback: CallbackQuery):
     kb = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="ℹ️ اطلاعات", callback_data=f"manage_action_info_{admin.id}")],
         [InlineKeyboardButton(text="🔄 فعالسازی", callback_data=f"manage_action_activate_{admin.id}"), InlineKeyboardButton(text="⛔ غیرفعالسازی", callback_data=f"manage_action_deactivate_{admin.id}")],
-        [InlineKeyboardButton(text="🗑️ حذف پنل", callback_data=f"manage_action_delete_{admin.id}")],
+        [InlineKeyboardButton(text=config.BUTTONS["remove_admin"], callback_data=f"manage_action_delete_{admin.id}")],
         [InlineKeyboardButton(text="♻️ ریست زمان", callback_data=f"manage_action_reset_time_{admin.id}"), InlineKeyboardButton(text="♻️ ریست حجم", callback_data=f"manage_action_reset_traffic_{admin.id}")],
         [InlineKeyboardButton(text="👥 تعداد کاربر", callback_data=f"manage_action_users_{admin.id}")],
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_manage_admins")]
