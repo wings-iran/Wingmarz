@@ -2344,6 +2344,11 @@ async def activate_panel_selected(callback: CallbackQuery):
         password_restored = False
         if db_success and admin.original_password:
             password_restored = await restore_admin_password_and_update_db(admin.id, admin.original_password)
+            # Give Marzban a brief moment to apply password change
+            try:
+                await asyncio.sleep(0.5)
+            except Exception:
+                pass
         users_reactivated = 0
         try:
             users_reactivated = await reactivate_admin_panel_users(admin.id)
@@ -2508,9 +2513,19 @@ async def reactivate_admin_panel_users(admin_id: int) -> int:
             logger.warning(f"No marzban username found for admin panel {admin_id}")
             return 0
         
-        # Get admin's users from Marzban using admin's credentials
-        admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
-        users = await admin_api.get_users()
+        users = []
+        # Try via admin API first (uses panel credentials)
+        try:
+            admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
+            users = await admin_api.get_users()
+        except Exception as e:
+            logger.warning(f"reactivate_admin_panel_users: admin API path failed for {admin.marzban_username}: {e}")
+            # Fallback: use main API to get users of this admin
+            try:
+                users = await marzban_api.get_admin_users(admin.marzban_username)
+            except Exception as e2:
+                logger.error(f"reactivate_admin_panel_users: main API fallback failed for {admin.marzban_username}: {e2}")
+                users = []
         
         reactivated_count = 0
         for user in users:
@@ -2945,6 +2960,11 @@ async def manage_action_activate(callback: CallbackQuery):
         password_restored = False
         if db_success and admin.original_password:
             password_restored = await restore_admin_password_and_update_db(admin.id, admin.original_password)
+            # Give Marzban a brief moment to apply password change
+            try:
+                await asyncio.sleep(0.5)
+            except Exception:
+                pass
         users_reactivated = 0
         try:
             users_reactivated = await reactivate_admin_panel_users(admin.id)
