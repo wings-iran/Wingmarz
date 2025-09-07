@@ -578,8 +578,9 @@ async def admin_renew_users_amount(callback: CallbackQuery, state: FSMContext):
 
 async def show_cleanup_menu(callback: CallbackQuery, admin: AdminModel):
     """Show cleanup confirmation for users expired over 10 days (panel-scoped)."""
-    if callback.from_user.id not in config.SUDO_ADMINS:
-        await callback.answer("این قابلیت فقط برای سودو فعال است.", show_alert=True)
+    # Allow owner admin or sudo
+    if callback.from_user.id not in (config.SUDO_ADMINS + [admin.user_id]):
+        await callback.answer("غیرمجاز", show_alert=True)
         return
     panel_name = admin.admin_name or admin.marzban_username
     # Compute count for this panel only
@@ -606,8 +607,8 @@ async def show_cleanup_menu(callback: CallbackQuery, admin: AdminModel):
 
 async def perform_cleanup(callback: CallbackQuery, admin: AdminModel):
     """Delete users expired more than 10 days for this panel only."""
-    if callback.from_user.id not in config.SUDO_ADMINS:
-        await callback.answer("این قابلیت فقط برای سودو فعال است.", show_alert=True)
+    if callback.from_user.id not in (config.SUDO_ADMINS + [admin.user_id]):
+        await callback.answer("غیرمجاز", show_alert=True)
         return
     try:
         admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
@@ -629,8 +630,8 @@ async def perform_cleanup(callback: CallbackQuery, admin: AdminModel):
 
 async def show_cleanup_small_menu(callback: CallbackQuery, admin: AdminModel):
     """Show confirmation for panel-scoped cleanup of <=1GB finished/time-expired users."""
-    if callback.from_user.id not in config.SUDO_ADMINS:
-        await callback.answer("این قابلیت فقط برای سودو فعال است.", show_alert=True)
+    if callback.from_user.id not in (config.SUDO_ADMINS + [admin.user_id]):
+        await callback.answer("غیرمجاز", show_alert=True)
         return
     panel_name = admin.admin_name or admin.marzban_username
     try:
@@ -666,8 +667,8 @@ async def cleanup_small_confirm_panel_selected(callback: CallbackQuery):
 
 async def perform_cleanup_small(callback: CallbackQuery, admin: AdminModel):
     """Delete small-quota finished/time-expired users for this panel only."""
-    if callback.from_user.id not in config.SUDO_ADMINS:
-        await callback.answer("این قابلیت فقط برای سودو فعال است.", show_alert=True)
+    if callback.from_user.id not in (config.SUDO_ADMINS + [admin.user_id]):
+        await callback.answer("غیرمجاز", show_alert=True)
         return
     try:
         admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
@@ -860,7 +861,16 @@ async def cleanup_menu_panel_selected(callback: CallbackQuery):
 
 @admin_router.callback_query(F.data.startswith("cleanup_small_menu_panel_"))
 async def cleanup_small_menu_panel_selected(callback: CallbackQuery):
-    await callback.answer("این قابلیت فقط برای سودو فعال است.", show_alert=True)
+    admin_id = int(callback.data.split("_")[-1])
+    admin = await db.get_admin_by_id(admin_id)
+    if not admin:
+        await callback.answer("پنل یافت نشد.", show_alert=True)
+        return
+    # Allow owner admin or sudo to access
+    if callback.from_user.id == admin.user_id or callback.from_user.id in config.SUDO_ADMINS:
+        await show_cleanup_small_menu(callback, admin)
+    else:
+        await callback.answer("غیرمجاز", show_alert=True)
 
 
 @admin_router.callback_query(F.data.startswith("reset_panel_"))
