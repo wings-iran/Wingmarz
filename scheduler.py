@@ -271,9 +271,10 @@ class MonitoringScheduler:
             for sudo_id in config.SUDO_ADMINS:
                 try:
                     from pathlib import Path
+                    from aiogram.types import FSInputFile
                     p = Path(str(path))
                     if p.exists():
-                        await self.bot.send_document(chat_id=sudo_id, document=open(p, 'rb'), caption=f"بکاپ خودکار: {p.name}")
+                        await self.bot.send_document(chat_id=sudo_id, document=FSInputFile(str(p)), caption=f"بکاپ خودکار: {p.name}")
                     else:
                         await self.bot.send_document(chat_id=sudo_id, document=str(path), caption=f"بکاپ خودکار: {p.name}")
                 except Exception:
@@ -287,10 +288,10 @@ class MonitoringScheduler:
             job = self.scheduler.get_job(self.backup_job_id)
             if job:
                 self.scheduler.remove_job(self.backup_job_id)
-            # Schedule hourly at minute 0
+            # Schedule every 60 minutes from now to avoid minute-0 alignment issues
             self.scheduler.add_job(
                 self.send_backup,
-                trigger=CronTrigger(minute=0),
+                trigger=IntervalTrigger(hours=1),
                 id=self.backup_job_id,
                 name="Hourly Bot Backup",
                 replace_existing=True,
