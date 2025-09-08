@@ -3485,6 +3485,11 @@ async def order_reject(callback: CallbackQuery):
         await callback.answer("سفارش یافت نشد.", show_alert=True)
         return
     await db.update_order(oid, status="rejected", approved_by=callback.from_user.id)
+    # Notify end user about rejection
+    try:
+        await callback.bot.send_message(chat_id=o['user_id'], text=config.MESSAGES["order_rejected_user"])
+    except Exception as e:
+        logger.error(f"Failed to notify user {o['user_id']} about order rejection {oid}: {e}")
     await callback.message.edit_text("⛔ سفارش رد شد.")
     await callback.answer()
 
