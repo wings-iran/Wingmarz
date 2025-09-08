@@ -617,7 +617,7 @@ async def perform_cleanup(callback: CallbackQuery, admin: AdminModel):
         # Progress feedback
         try:
             progress_msg = await callback.message.answer(
-                f"⏳ در حال پاکسازی منقضی‌های ۱۰+ روز...\nکاندید: {candidate_count}\nحذف‌شده: 0"
+                f"⏳ در حال پاکسازی لطفا صبر کنید\nمنقضی‌های ۱۰+ روز...\nکاندید: {candidate_count}\nحذف‌شده: 0"
             )
         except Exception:
             progress_msg = None
@@ -632,7 +632,7 @@ async def perform_cleanup(callback: CallbackQuery, admin: AdminModel):
             if progress_msg and (processed % 25 == 0 or processed == candidate_count):
                 try:
                     await progress_msg.edit_text(
-                        f"⏳ در حال پاکسازی منقضی‌های ۱۰+ روز...\nکاندید: {candidate_count}\nپردازش‌شده: {processed}\nحذف‌شده: {deleted}"
+                        f"⏳ در حال پاکسازی لطفا صبر کنید\nمنقضی‌های ۱۰+ روز...\nکاندید: {candidate_count}\nپردازش‌شده: {processed}\nحذف‌شده: {deleted}"
                     )
                 except TelegramBadRequest as e:
                     if "message is not modified" in str(e).lower():
@@ -704,7 +704,7 @@ async def perform_cleanup_small(callback: CallbackQuery, admin: AdminModel):
         # Progress feedback
         try:
             progress_msg = await callback.message.answer(
-                f"⏳ در حال پاکسازی ساب‌های ≤۱GB...\nکاندید: {candidate_count}\nحذف‌شده: 0\nناموفق: 0"
+                f"⏳ در حال پاکسازی لطفا صبر کنید\nساب‌های ≤۱GB...\nکاندید: {candidate_count}\nحذف‌شده: 0\nناموفق: 0"
             )
         except Exception:
             progress_msg = None
@@ -721,7 +721,7 @@ async def perform_cleanup_small(callback: CallbackQuery, admin: AdminModel):
             if progress_msg and (processed % 25 == 0 or processed == candidate_count):
                 try:
                     await progress_msg.edit_text(
-                        f"⏳ در حال پاکسازی ساب‌های ≤۱GB...\nکاندید: {candidate_count}\nپردازش‌شده: {processed}\nحذف‌شده: {deleted}\nناموفق: {failed}"
+                        f"⏳ در حال پاکسازی لطفا صبر کنید\nساب‌های ≤۱GB...\nکاندید: {candidate_count}\nپردازش‌شده: {processed}\nحذف‌شده: {deleted}\nناموفق: {failed}"
                     )
                 except TelegramBadRequest as e:
                     if "message is not modified" in str(e).lower():
