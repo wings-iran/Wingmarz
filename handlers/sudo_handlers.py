@@ -289,7 +289,8 @@ async def sudo_menu_cleanup(callback: CallbackQuery):
         await callback.answer("غیرمجاز", show_alert=True)
         return
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=config.BUTTONS["cleanup_old_expired"], callback_data="sudo_cleanup_old_expired"), InlineKeyboardButton(text=config.BUTTONS["cleanup_small_quota"], callback_data="sudo_cleanup_small_quota")],
+        [InlineKeyboardButton(text=config.BUTTONS["cleanup_old_expired"], callback_data="sudo_cleanup_old_expired")],
+        [InlineKeyboardButton(text=config.BUTTONS["cleanup_small_quota"], callback_data="sudo_cleanup_small_quota")],
         [InlineKeyboardButton(text=config.BUTTONS["reset_usage"], callback_data="sudo_reset_usage")],
         [InlineKeyboardButton(text=config.BUTTONS["non_payer"], callback_data="sudo_non_payer")],
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
