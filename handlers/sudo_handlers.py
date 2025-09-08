@@ -2505,9 +2505,10 @@ async def reactivate_admin_users(admin_user_id: int) -> bool:
         
         reactivated_count = 0
         for user in users:
-            if user.status == "disabled":
-                # Try to reactivate user using main API
-                success = await marzban_api.enable_user(user.username)
+            # Reactivate any user that is not already active (e.g., disabled/limited)
+            status_value = (user.status or "").lower()
+            if status_value != "active":
+                success = await marzban_api.modify_user(user.username, {"status": "active"})
                 if success:
                     reactivated_count += 1
         
@@ -2543,9 +2544,9 @@ async def reactivate_admin_panel_users(admin_id: int) -> int:
         
         reactivated_count = 0
         for user in users:
-            if user.status == "disabled":
+            status_value = (user.status or "").lower()
+            if status_value != "active":
                 try:
-                    # Try to reactivate user using modify_user API
                     success = await marzban_api.modify_user(user.username, {"status": "active"})
                     if success:
                         reactivated_count += 1
