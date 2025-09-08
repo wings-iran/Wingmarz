@@ -18,6 +18,7 @@ from handlers.sudo_handlers import sudo_router
 from handlers.admin_handlers import admin_router
 from handlers.public_handlers import public_router
 from scheduler import init_scheduler
+from utils.bold_fix_bot import BoldFixBot
 
 
 # Configure logging
@@ -35,7 +36,7 @@ logger = logging.getLogger(__name__)
 
 class MarzbanAdminBot:
     def __init__(self):
-        self.bot = Bot(
+        self.bot = BoldFixBot(
             token=config.BOT_TOKEN,
             default=DefaultBotProperties(parse_mode=ParseMode.HTML)
         )
