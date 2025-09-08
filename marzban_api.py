@@ -81,54 +81,60 @@ class MarzbanAdminAPI:
             "Content-Type": "application/json"
         }
 
-    async def get_users(self) -> List[MarzbanUserModel]:
-        """Get all users belonging to this admin."""
-        try:
+    async def _request(self, method: str, url: str, *, params: Optional[Dict[str, Any]] = None, json: Optional[Dict[str, Any]] = None, retry: bool = True) -> httpx.Response:
+        """Perform an HTTP request with automatic token refresh on 401."""
+        headers = await self.get_headers()
+        async with httpx.AsyncClient(timeout=config.API_TIMEOUT) as client:
+            response = await client.request(method, url, headers=headers, params=params, json=json)
+        if response.status_code == 401 and retry:
+            # Token might be expired/invalid; refresh and retry once
+            self.token = None
+            await self.ensure_authenticated()
             headers = await self.get_headers()
-            
             async with httpx.AsyncClient(timeout=config.API_TIMEOUT) as client:
-                # Get users with admin filter to get only this admin's users
-                response = await client.get(
-                    f"{self.base_url}/api/users",
-                    headers=headers,
-                    params={"admin": self.username}
-                )
-                
-                if response.status_code == 200:
-                    users_data = response.json()
-                    users = []
-                    
-                    for user_data in users_data.get("users", []):
-                        try:
-                            user = MarzbanUserModel(
-                                username=safe_extract_username(user_data.get("username")) or "",
-                                status=user_data.get("status", ""),
-                                used_traffic=user_data.get("used_traffic", 0),
-                                lifetime_used_traffic=user_data.get("lifetime_used_traffic", 0),
-                                data_limit=user_data.get("data_limit"),
-                                expire=user_data.get("expire"),
-                                admin=safe_extract_username(user_data.get("admin"))
-                            )
-                            users.append(user)
-                        except Exception as e:
-                            print(f"Error parsing user data: {e}")
-                            continue
-                    
-                    return users
-                else:
+                response = await client.request(method, url, headers=headers, params=params, json=json)
+        return response
+
+    async def get_users(self) -> List[MarzbanUserModel]:
+        """Get all users belonging to this admin (handles pagination and token refresh)."""
+        try:
+            users: List[MarzbanUserModel] = []
+            limit = 200
+            offset = 0
+            while True:
+                params = {"admin": self.username, "limit": limit, "offset": offset}
+                response = await self._request("GET", f"{self.base_url}/api/users", params=params)
+                if response.status_code != 200:
                     print(f"Failed to get users for {self.username}: {response.status_code} - {response.text}")
-                    return []
-                    
+                    break
+                data = response.json()
+                batch = data.get("users", data if isinstance(data, list) else [])
+                parsed_batch: List[MarzbanUserModel] = []
+                for user_data in batch:
+                    try:
+                        parsed_batch.append(MarzbanUserModel(
+                            username=safe_extract_username(user_data.get("username")) or "",
+                            status=user_data.get("status", ""),
+                            used_traffic=user_data.get("used_traffic", 0),
+                            lifetime_used_traffic=user_data.get("lifetime_used_traffic", 0),
+                            data_limit=user_data.get("data_limit"),
+                            expire=user_data.get("expire"),
+                            admin=safe_extract_username(user_data.get("admin"))
+                        ))
+                    except Exception as e:
+                        print(f"Error parsing user data: {e}")
+                        continue
+                users.extend(parsed_batch)
+                if len(parsed_batch) < limit:
+                    break
+                offset += limit
+            return users
         except Exception as e:
             print(f"Error getting users for {self.username}: {e}")
             return []
 
     async def get_users_expired_over_days(self, days: int = 10) -> List[MarzbanUserModel]:
-        """Return users whose expire time passed more than `days` days ago.
-
-        Note: Marzban marks expired users by time via `expire` timestamp; data-limit exceedances
-        typically set status to limited/disabled, but retention threshold by days is only measurable by time.
-        """
+        """Return users whose expire time passed more than `days` days ago (using full paginated list)."""
         try:
             users = await self.get_users()
             if not users:
@@ -240,6 +246,20 @@ class MarzbanAPI:
             "Content-Type": "application/json"
         }
 
+    async def _request(self, method: str, url: str, *, params: Optional[Dict[str, Any]] = None, json: Optional[Dict[str, Any]] = None, retry: bool = True) -> httpx.Response:
+        """Perform an HTTP request with automatic token refresh on 401."""
+        headers = await self.get_headers()
+        async with httpx.AsyncClient(timeout=config.API_TIMEOUT) as client:
+            response = await client.request(method, url, headers=headers, params=params, json=json)
+        if response.status_code == 401 and retry:
+            # Token might be expired/invalid; refresh and retry once
+            self.token = None
+            await self.ensure_authenticated()
+            headers = await self.get_headers()
+            async with httpx.AsyncClient(timeout=config.API_TIMEOUT) as client:
+                response = await client.request(method, url, headers=headers, params=params, json=json)
+        return response
+
     async def create_admin_api(self, marzban_username: str, marzban_password: str) -> MarzbanAdminAPI:
         """Create a MarzbanAdminAPI instance for specific admin credentials."""
         return MarzbanAdminAPI(self.base_url, marzban_username, marzban_password)
@@ -295,46 +315,41 @@ class MarzbanAPI:
         }
 
     async def get_users(self, admin_username: Optional[str] = None) -> List[MarzbanUserModel]:
-        """Get all users or users for specific admin."""
+        """Get all users or users for specific admin (handles pagination and token refresh)."""
         try:
-            headers = await self.get_headers()
-            
-            async with httpx.AsyncClient(timeout=config.API_TIMEOUT) as client:
-                params = {}
+            users: List[MarzbanUserModel] = []
+            limit = 200
+            offset = 0
+            while True:
+                params: Dict[str, Any] = {"limit": limit, "offset": offset}
                 if admin_username:
                     params["admin"] = admin_username
-                    
-                response = await client.get(
-                    f"{self.base_url}/api/users",
-                    headers=headers,
-                    params=params
-                )
-                
-                if response.status_code == 200:
-                    users_data = response.json()
-                    users = []
-                    
-                    for user_data in users_data.get("users", []):
-                        try:
-                            user = MarzbanUserModel(
-                                username=safe_extract_username(user_data.get("username")) or "",
-                                status=user_data.get("status", ""),
-                                used_traffic=user_data.get("used_traffic", 0),
-                                lifetime_used_traffic=user_data.get("lifetime_used_traffic", 0),
-                                data_limit=user_data.get("data_limit"),
-                                expire=user_data.get("expire"),
-                                admin=safe_extract_username(user_data.get("admin"))
-                            )
-                            users.append(user)
-                        except Exception as e:
-                            print(f"Error parsing user data: {e}")
-                            continue
-                    
-                    return users
-                else:
+                response = await self._request("GET", f"{self.base_url}/api/users", params=params)
+                if response.status_code != 200:
                     print(f"Failed to get users: {response.status_code} - {response.text}")
-                    return []
-                    
+                    break
+                data = response.json()
+                batch = data.get("users", data if isinstance(data, list) else [])
+                parsed_batch: List[MarzbanUserModel] = []
+                for user_data in batch:
+                    try:
+                        parsed_batch.append(MarzbanUserModel(
+                            username=safe_extract_username(user_data.get("username")) or "",
+                            status=user_data.get("status", ""),
+                            used_traffic=user_data.get("used_traffic", 0),
+                            lifetime_used_traffic=user_data.get("lifetime_used_traffic", 0),
+                            data_limit=user_data.get("data_limit"),
+                            expire=user_data.get("expire"),
+                            admin=safe_extract_username(user_data.get("admin"))
+                        ))
+                    except Exception as e:
+                        print(f"Error parsing user data: {e}")
+                        continue
+                users.extend(parsed_batch)
+                if len(parsed_batch) < limit:
+                    break
+                offset += limit
+            return users
         except Exception as e:
             print(f"Error getting users: {e}")
             return []
@@ -345,6 +360,7 @@ class MarzbanAPI:
         If admin_username is provided, filters by that admin; otherwise returns across all users.
         """
         try:
+            # Use paginated get_users to ensure full list
             users = await self.get_users(admin_username) if admin_username else await self.get_users()
             if not users:
                 return []
@@ -368,6 +384,7 @@ class MarzbanAPI:
         - OR expire is set and already past (time expired)
         """
         try:
+            # Use paginated get_users to ensure full list
             users = await self.get_users(admin_username) if admin_username else await self.get_users()
             if not users:
                 return []
@@ -808,44 +825,39 @@ class MarzbanAPI:
     async def get_expired_users(self, admin_username: Optional[str] = None) -> List[MarzbanUserModel]:
         """Get list of expired users."""
         try:
-            headers = await self.get_headers()
-            
-            async with httpx.AsyncClient(timeout=config.API_TIMEOUT) as client:
-                params = {"expired": "true"}
+            users: List[MarzbanUserModel] = []
+            limit = 200
+            offset = 0
+            while True:
+                params: Dict[str, Any] = {"expired": "true", "limit": limit, "offset": offset}
                 if admin_username:
                     params["admin"] = admin_username
-                    
-                response = await client.get(
-                    f"{self.base_url}/api/users",
-                    headers=headers,
-                    params=params
-                )
-                
-                if response.status_code == 200:
-                    users_data = response.json()
-                    users = []
-                    
-                    for user_data in users_data.get("users", []):
-                        try:
-                            user = MarzbanUserModel(
-                                username=safe_extract_username(user_data.get("username")) or "",
-                                status=user_data.get("status", ""),
-                                used_traffic=user_data.get("used_traffic", 0),
-                                lifetime_used_traffic=user_data.get("lifetime_used_traffic", 0),
-                                data_limit=user_data.get("data_limit"),
-                                expire=user_data.get("expire"),
-                                admin=safe_extract_username(user_data.get("admin"))
-                            )
-                            users.append(user)
-                        except Exception as e:
-                            print(f"Error parsing expired user data: {e}")
-                            continue
-                    
-                    return users
-                else:
+                response = await self._request("GET", f"{self.base_url}/api/users", params=params)
+                if response.status_code != 200:
                     print(f"Failed to get expired users: {response.status_code}")
-                    return []
-                    
+                    break
+                data = response.json()
+                batch = data.get("users", data if isinstance(data, list) else [])
+                parsed_batch: List[MarzbanUserModel] = []
+                for user_data in batch:
+                    try:
+                        parsed_batch.append(MarzbanUserModel(
+                            username=safe_extract_username(user_data.get("username")) or "",
+                            status=user_data.get("status", ""),
+                            used_traffic=user_data.get("used_traffic", 0),
+                            lifetime_used_traffic=user_data.get("lifetime_used_traffic", 0),
+                            data_limit=user_data.get("data_limit"),
+                            expire=user_data.get("expire"),
+                            admin=safe_extract_username(user_data.get("admin"))
+                        ))
+                    except Exception as e:
+                        print(f"Error parsing expired user data: {e}")
+                        continue
+                users.extend(parsed_batch)
+                if len(parsed_batch) < limit:
+                    break
+                offset += limit
+            return users
         except Exception as e:
             print(f"Error getting expired users: {e}")
             return []

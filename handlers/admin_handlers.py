@@ -578,8 +578,9 @@ async def admin_renew_users_amount(callback: CallbackQuery, state: FSMContext):
 
 async def show_cleanup_menu(callback: CallbackQuery, admin: AdminModel):
     """Show cleanup confirmation for users expired over 10 days (panel-scoped)."""
-    if callback.from_user.id not in config.SUDO_ADMINS:
-        await callback.answer("این قابلیت فقط برای سودو فعال است.", show_alert=True)
+    # Allow owner admin or sudo
+    if callback.from_user.id not in (config.SUDO_ADMINS + [admin.user_id]):
+        await callback.answer("غیرمجاز", show_alert=True)
         return
     panel_name = admin.admin_name or admin.marzban_username
     # Compute count for this panel only
@@ -606,31 +607,58 @@ async def show_cleanup_menu(callback: CallbackQuery, admin: AdminModel):
 
 async def perform_cleanup(callback: CallbackQuery, admin: AdminModel):
     """Delete users expired more than 10 days for this panel only."""
-    if callback.from_user.id not in config.SUDO_ADMINS:
-        await callback.answer("این قابلیت فقط برای سودو فعال است.", show_alert=True)
+    if callback.from_user.id not in (config.SUDO_ADMINS + [admin.user_id]):
+        await callback.answer("غیرمجاز", show_alert=True)
         return
     try:
         admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
         old_expired = await admin_api.get_users_expired_over_days(10)
+        candidate_count = len(old_expired)
+        # Progress feedback
+        try:
+            progress_msg = await callback.message.answer(
+                f"⏳ در حال پاکسازی منقضی‌های ۱۰+ روز...\nکاندید: {candidate_count}\nحذف‌شده: 0"
+            )
+        except Exception:
+            progress_msg = None
         deleted = 0
+        processed = 0
         for u in old_expired:
             ok = await marzban_api.remove_user(u.username)
+            processed += 1
             if ok:
                 deleted += 1
+            # Update progress every 25 items or on last
+            if progress_msg and (processed % 25 == 0 or processed == candidate_count):
+                try:
+                    await progress_msg.edit_text(
+                        f"⏳ در حال پاکسازی منقضی‌های ۱۰+ روز...\nکاندید: {candidate_count}\nپردازش‌شده: {processed}\nحذف‌شده: {deleted}"
+                    )
+                except TelegramBadRequest as e:
+                    if "message is not modified" in str(e).lower():
+                        pass
+                    else:
+                        raise
         msg = f"✅ {deleted} کاربر قدیمی در همین پنل حذف شد."
     except Exception as e:
         logger.error(f"Error performing cleanup for admin {admin.id}: {e}")
         msg = "❌ خطا در حذف کاربران قدیمی پنل."
     is_sudo = callback.from_user.id in config.SUDO_ADMINS
     back_cb = "back_to_main" if is_sudo else "back_to_admin_main"
+    # Cleanup progress message if exists
+    try:
+        if progress_msg:
+            await progress_msg.delete()
+    except Exception:
+        pass
     await callback.message.edit_text(msg, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data=back_cb)]]))
     await callback.answer()
 
 
 async def show_cleanup_small_menu(callback: CallbackQuery, admin: AdminModel):
     """Show confirmation for panel-scoped cleanup of <=1GB finished/time-expired users."""
-    if callback.from_user.id not in config.SUDO_ADMINS:
-        await callback.answer("این قابلیت فقط برای سودو فعال است.", show_alert=True)
+    if callback.from_user.id not in (config.SUDO_ADMINS + [admin.user_id]):
+        await callback.answer("غیرمجاز", show_alert=True)
         return
     panel_name = admin.admin_name or admin.marzban_username
     try:
@@ -666,21 +694,40 @@ async def cleanup_small_confirm_panel_selected(callback: CallbackQuery):
 
 async def perform_cleanup_small(callback: CallbackQuery, admin: AdminModel):
     """Delete small-quota finished/time-expired users for this panel only."""
-    if callback.from_user.id not in config.SUDO_ADMINS:
-        await callback.answer("این قابلیت فقط برای سودو فعال است.", show_alert=True)
+    if callback.from_user.id not in (config.SUDO_ADMINS + [admin.user_id]):
+        await callback.answer("غیرمجاز", show_alert=True)
         return
     try:
         admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
         to_delete = await admin_api.get_small_quota_finished_users(1073741824)
         candidate_count = len(to_delete)
+        # Progress feedback
+        try:
+            progress_msg = await callback.message.answer(
+                f"⏳ در حال پاکسازی ساب‌های ≤۱GB...\nکاندید: {candidate_count}\nحذف‌شده: 0\nناموفق: 0"
+            )
+        except Exception:
+            progress_msg = None
         deleted = 0
         failed = 0
+        processed = 0
         for u in to_delete:
             ok = await marzban_api.remove_user(u.username)
+            processed += 1
             if ok:
                 deleted += 1
             else:
                 failed += 1
+            if progress_msg and (processed % 25 == 0 or processed == candidate_count):
+                try:
+                    await progress_msg.edit_text(
+                        f"⏳ در حال پاکسازی ساب‌های ≤۱GB...\nکاندید: {candidate_count}\nپردازش‌شده: {processed}\nحذف‌شده: {deleted}\nناموفق: {failed}"
+                    )
+                except TelegramBadRequest as e:
+                    if "message is not modified" in str(e).lower():
+                        pass
+                    else:
+                        raise
         msg = (
             "✅ پاکسازی ساب‌های ≤۱GB تمام‌شده/منقضی در همین پنل انجام شد\n\n"
             f"کاندید: {candidate_count}\n"
@@ -690,6 +737,11 @@ async def perform_cleanup_small(callback: CallbackQuery, admin: AdminModel):
     except Exception as e:
         logger.error(f"Error performing small cleanup for admin {admin.id}: {e}")
         msg = "❌ خطا در حذف کاربران سهمیه کم پنل."
+    try:
+        if progress_msg:
+            await progress_msg.delete()
+    except Exception:
+        pass
     await callback.message.edit_text(msg, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_admin_main")]]))
     await callback.answer()
 
@@ -860,7 +912,16 @@ async def cleanup_menu_panel_selected(callback: CallbackQuery):
 
 @admin_router.callback_query(F.data.startswith("cleanup_small_menu_panel_"))
 async def cleanup_small_menu_panel_selected(callback: CallbackQuery):
-    await callback.answer("این قابلیت فقط برای سودو فعال است.", show_alert=True)
+    admin_id = int(callback.data.split("_")[-1])
+    admin = await db.get_admin_by_id(admin_id)
+    if not admin:
+        await callback.answer("پنل یافت نشد.", show_alert=True)
+        return
+    # Allow owner admin or sudo to access
+    if callback.from_user.id == admin.user_id or callback.from_user.id in config.SUDO_ADMINS:
+        await show_cleanup_small_menu(callback, admin)
+    else:
+        await callback.answer("غیرمجاز", show_alert=True)
 
 
 @admin_router.callback_query(F.data.startswith("reset_panel_"))
