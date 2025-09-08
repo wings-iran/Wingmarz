@@ -463,7 +463,7 @@ async def backup_schedule_entry(callback: CallbackQuery, state: FSMContext):
         "(در حال حاضر فقط هر ساعت پشتیبانی می‌شود)"
     )
     await state.set_state(BackupScheduleStates.waiting_input)
-    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_backup")]]))
+    await callback.message.edit_text(text)
     await callback.answer()
 
 @sudo_router.message(BackupScheduleStates.waiting_input, F.text)
@@ -474,19 +474,23 @@ async def backup_schedule_set(message: Message, state: FSMContext):
         ok = scheduler.disable_backup_schedule() if scheduler else False
         if ok:
             await db.set_setting("backup_schedule", "off")
-            await message.answer(config.MESSAGES["backup_schedule_disabled"]) 
+            await message.answer("✅ تنظیم شد.")
         else:
             await message.answer("❌ خطا در غیرفعالسازی زمان‌بندی.")
         await state.clear()
+        # Return directly to admin main menu
+        await message.answer(config.MESSAGES["welcome_sudo"], reply_markup=get_sudo_keyboard())
         return
     if txt in ("1h", "hour", "hourly"):
         ok = scheduler.schedule_backup_every_hour() if scheduler else False
         if ok:
             await db.set_setting("backup_schedule", "1h")
-            await message.answer(config.MESSAGES["backup_schedule_saved"]) 
+            await message.answer("✅ تنظیم شد.")
         else:
             await message.answer("❌ خطا در ذخیره زمان‌بندی.")
         await state.clear()
+        # Return directly to admin main menu
+        await message.answer(config.MESSAGES["welcome_sudo"], reply_markup=get_sudo_keyboard())
         return
     await message.answer("فرمت نامعتبر. فقط '1h' یا 'off' مجاز است.")
 
