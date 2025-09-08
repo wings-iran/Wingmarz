@@ -37,6 +37,7 @@ class AddAdminStates(StatesGroup):
 
 class ImportAdminStates(StatesGroup):
     waiting_for_admin_name = State()
+    waiting_for_target_user_id = State()
     waiting_for_marzban_username = State()
     waiting_for_marzban_password = State()
     waiting_for_traffic_volume = State()
@@ -144,8 +145,19 @@ async def import_admin_entry(callback: CallbackQuery, state: FSMContext):
 async def import_admin_name(message: Message, state: FSMContext):
     name = message.text.strip()
     await state.update_data(admin_name=None if name == '-' else name)
-    await state.set_state(ImportAdminStates.waiting_for_marzban_username)
-    await message.answer("نام کاربری پنل در مرزبان را ارسال کنید:")
+    await state.set_state(ImportAdminStates.waiting_for_target_user_id)
+    await message.answer("آیدی عددی تلگرام ادمین (User ID) را ارسال کنید:")
+
+
+@sudo_router.message(ImportAdminStates.waiting_for_target_user_id, F.text)
+async def import_admin_target_user_id(message: Message, state: FSMContext):
+    try:
+        target_user_id = int(message.text.strip())
+        await state.update_data(target_user_id=target_user_id)
+        await state.set_state(ImportAdminStates.waiting_for_marzban_username)
+        await message.answer("نام کاربری پنل در مرزبان را ارسال کنید:")
+    except Exception:
+        await message.answer("آیدی عددی نامعتبر است. یک عدد صحیح ارسال کنید:")
 
 @sudo_router.message(ImportAdminStates.waiting_for_marzban_username, F.text)
 async def import_admin_username(message: Message, state: FSMContext):
@@ -204,6 +216,7 @@ async def import_admin_max_users(message: Message, state: FSMContext):
         text = (
             "✅ تایید افزودن ادمین قبلی\n\n"
             f"نام: {data.get('admin_name') or '-'}\n"
+            f"آیدی کاربر مقصد: {data.get('target_user_id','-')}\n"
             f"نام کاربری مرزبان: {data.get('marzban_username')}\n"
             f"کاربر: {max_users}\n"
             f"حجم: {data.get('max_total_traffic')} بایت\n"
@@ -224,7 +237,8 @@ async def confirm_import_admin(callback: CallbackQuery, state: FSMContext):
     if callback.from_user.id not in config.SUDO_ADMINS:
         await callback.answer("غیرمجاز", show_alert=True)
         return
-    user_id = callback.from_user.id
+    # Target user who will own this imported panel in the bot
+    user_id = data.get('target_user_id') or callback.from_user.id
     data = await state.get_data()
     await state.clear()
     # Validate credentials by trying to fetch stats
