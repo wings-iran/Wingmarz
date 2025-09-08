@@ -12,9 +12,10 @@ import config
 from database import db
 from models.schemas import AdminModel, LogModel
 from utils.notify import (
-    notify_admin_added, notify_admin_removed, format_traffic_size, format_time_duration,
-    gb_to_bytes, days_to_seconds, bytes_to_gb, seconds_to_days
+    notify_admin_added, notify_admin_removed, notify_admin_deactivated, format_traffic_size, format_time_duration,
+    gb_to_bytes, days_to_seconds, bytes_to_gb, seconds_to_days,
 )
+from utils.notify import notify_admin_reactivation as notify_admin_reactivation_utils
 from marzban_api import marzban_api
 from datetime import datetime
 from handlers.admin_handlers import show_cleanup_menu, perform_cleanup
@@ -2374,7 +2375,8 @@ async def activate_panel_selected(callback: CallbackQuery):
         await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]]))
         await callback.answer()
         try:
-            await notify_admin_reactivation(callback.bot, user_id, callback.from_user.id)
+            # notify affected admin user about reactivation
+            await notify_admin_reactivation_utils(callback.bot, user_id, callback.from_user.id)
         except Exception as e:
             logger.error(f"Error sending reactivation notification: {e}")
     except Exception as e:
@@ -3017,6 +3019,11 @@ async def manage_action_deactivate(callback: CallbackQuery):
         if success:
             pwd_text = f"\n🔐 پسورد جدید: `{new_password}`" if pwd_changed else "\n⚠️ تغییر پسورد انجام نشد."
             text = f"✅ پنل غیرفعال شد.{pwd_text}"
+            try:
+                # notify affected admin user
+                await notify_admin_deactivated(callback.bot, admin.user_id, "غیرفعالسازی دستی توسط سودو")
+            except Exception as e:
+                logger.warning(f"Failed to notify admin {admin.user_id} about manual deactivation: {e}")
         else:
             text = "❌ خطا در غیرفعالسازی پنل."
     except Exception as e:
