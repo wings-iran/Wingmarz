@@ -463,7 +463,7 @@ async def backup_schedule_entry(callback: CallbackQuery, state: FSMContext):
         "(در حال حاضر فقط هر ساعت پشتیبانی می‌شود)"
     )
     await state.set_state(BackupScheduleStates.waiting_input)
-    await callback.message.edit_text(text)
+    await callback.message.edit_text(text, reply_markup=None)
     await callback.answer()
 
 @sudo_router.message(BackupScheduleStates.waiting_input, F.text)
