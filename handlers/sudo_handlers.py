@@ -2994,6 +2994,11 @@ async def manage_action_activate(callback: CallbackQuery):
             f"🔑 {'پسورد بازیابی شد' if password_restored else 'پسورد قبلی در دسترس نبود'}\n"
             f"👥 کاربران فعال‌شده: {users_reactivated}"
         )
+        try:
+            # Notify affected admin about reactivation (was missing in manage flow)
+            await notify_admin_reactivation_utils(callback.bot, admin.user_id, callback.from_user.id)
+        except Exception as e:
+            logger.warning(f"Failed to notify admin {admin.user_id} about reactivation: {e}")
     except Exception as e:
         text = f"❌ خطا در فعالسازی: {e}"
     await callback.message.edit_text(text, reply_markup=_manage_back_keyboard(admin_id))
