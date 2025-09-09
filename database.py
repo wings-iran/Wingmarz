@@ -386,21 +386,87 @@ class Database:
             return []
 
     async def update_admin(self, admin_id: int, **kwargs) -> bool:
-        """Update admin data by admin ID."""
+        """Update admin data by admin ID.
+
+        Additionally, audit potentially sensitive changes (time limit and created_at)
+        by writing a log entry to the `logs` table. This helps trace any unexpected
+        monthly increments or timestamp resets.
+        """
         try:
             if not kwargs:
                 return False
-            
+
+            # Read current values for auditing before update
+            old_admin = await self.get_admin_by_id(admin_id)
+
             set_clause = ", ".join([f"{key} = ?" for key in kwargs.keys()])
             values = list(kwargs.values()) + [admin_id]
-            
+
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute(f"""
                     UPDATE admins SET {set_clause}, updated_at = CURRENT_TIMESTAMP 
                     WHERE id = ?
                 """, values)
                 await db.commit()
-                return True
+
+            # Post-update audit logs for key fields
+            try:
+                from models.schemas import LogModel
+                import inspect
+                # Capture simple caller info (best-effort)
+                caller = None
+                try:
+                    stack = inspect.stack()
+                    # Find first external frame after this function
+                    if len(stack) >= 3:
+                        frame = stack[2]
+                        caller = f"{frame.function}@{frame.filename}:{frame.lineno}"
+                except Exception:
+                    caller = None
+
+                # Audit max_total_time increment
+                if "max_total_time" in kwargs and old_admin is not None:
+                    old_val = int(old_admin.max_total_time or 0)
+                    new_val = int(kwargs.get("max_total_time") or 0)
+                    delta = new_val - old_val
+                    if delta != 0:
+                        details = (
+                            f"admin_id={admin_id} old={old_val}s new={new_val}s delta={delta}s"
+                            + (f" caller={caller}" if caller else "")
+                        )
+                        log = LogModel(
+                            admin_user_id=old_admin.user_id,
+                            action=("admin_time_limit_increased" if delta > 0 else "admin_time_limit_decreased"),
+                            details=details
+                        )
+                        await self.add_log(log)
+
+                # Audit created_at change
+                if "created_at" in kwargs and old_admin is not None:
+                    try:
+                        old_ts = old_admin.created_at.isoformat() if old_admin.created_at else "None"
+                    except Exception:
+                        old_ts = str(old_admin.created_at)
+                    new_ca = kwargs.get("created_at")
+                    try:
+                        new_ts = new_ca.isoformat() if new_ca else "None"
+                    except Exception:
+                        new_ts = str(new_ca)
+                    details = (
+                        f"admin_id={admin_id} old_created_at={old_ts} new_created_at={new_ts}"
+                        + (f" caller={caller}" if caller else "")
+                    )
+                    log = LogModel(
+                        admin_user_id=old_admin.user_id,
+                        action="admin_created_at_changed",
+                        details=details
+                    )
+                    await self.add_log(log)
+            except Exception as _audit_err:
+                # Non-fatal; auditing should never break main flow
+                print(f"Audit log failure in update_admin: {_audit_err}")
+
+            return True
         except Exception as e:
             print(f"Error updating admin: {e}")
             return False
