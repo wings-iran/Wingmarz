@@ -749,6 +749,13 @@ class MarzbanAPI:
             headers = await self.get_headers()
             
             logger.debug(f"Modifying user {username} in Marzban...")
+
+            # Soft-audit: warn if expire field is being changed, to trace unexpected extensions
+            try:
+                if any(k.lower() == "expire" for k in user_data.keys()):
+                    logger.warning(f"modify_user called with expire for {username}: {user_data.get('expire')}")
+            except Exception:
+                pass
             
             async with httpx.AsyncClient(timeout=config.API_TIMEOUT) as client:
                 response = await client.put(
