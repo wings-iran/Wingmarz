@@ -150,29 +150,38 @@ class MarzbanAdminAPI:
             return []
 
     async def get_admin_stats(self) -> AdminStatsModel:
-        """Get statistics for this admin - only count users owned by this admin."""
+        """Get statistics for this admin - count all users owned by this admin and provide breakdowns."""
         try:
             # Get all users belonging to this admin
             admin_users = await self.get_users()
             
-            # Filter out deleted/expired users and count only active/valid users
-            valid_users = []
+            # Count all users and breakdown by status
+            total_users = len(admin_users)
+            counts_by_status: Dict[str, int] = {}
+            active_users = 0
             for user in admin_users:
-                # Check if user is not expired
-                if user.expire is None or user.expire > datetime.now().timestamp():
-                    # Check if user status is not disabled/deleted
-                    if user.status in ["active", "limited"]:
-                        valid_users.append(user)
+                status_key = (user.status or "unknown").lower()
+                counts_by_status[status_key] = counts_by_status.get(status_key, 0) + 1
+                if status_key == "active":
+                    active_users += 1
             
-            total_users = len(valid_users)
-            active_users = len([u for u in valid_users if u.status == "active"])
+            # Extra counters
+            now_ts = datetime.now().timestamp()
+            expired_count = 0
+            quota_full_count = 0
+            disabled_count = counts_by_status.get("disabled", 0)
+            for user in admin_users:
+                if user.expire is not None and user.expire <= now_ts:
+                    expired_count += 1
+                # Quota full if data_limit set and used or lifetime_used reach/exceed limit
+                if user.data_limit is not None:
+                    used_now = user.used_traffic or 0
+                    lifetime_used = user.lifetime_used_traffic or 0
+                    if used_now >= user.data_limit or lifetime_used >= user.data_limit:
+                        quota_full_count += 1
             
-            # Calculate total traffic used (sum of upload and download for each user)
-            total_traffic_used = 0
-            for user in valid_users:
-                # Get user's current usage data (upload + download)
-                user_total_usage = user.used_traffic + (user.lifetime_used_traffic or 0)
-                total_traffic_used += user_total_usage
+            # Calculate total current period traffic used (use used_traffic only to avoid double counting)
+            total_traffic_used = sum((u.used_traffic or 0) for u in admin_users)
             
             # Time usage is not aggregated from users; returned as 0 here
             total_time_used = 0
@@ -181,7 +190,13 @@ class MarzbanAdminAPI:
                 total_users=total_users,
                 active_users=active_users,
                 total_traffic_used=total_traffic_used,
-                total_time_used=total_time_used
+                total_time_used=total_time_used,
+                counts_by_status=counts_by_status,
+                counts_extra={
+                    "expired": expired_count,
+                    "quota_full": quota_full_count,
+                    "disabled": disabled_count
+                }
             )
             
         except Exception as e:
@@ -532,29 +547,37 @@ class MarzbanAPI:
         return results
 
     async def get_admin_stats(self, admin_username: str) -> AdminStatsModel:
-        """Get statistics for a specific admin - only count users owned by this admin."""
+        """Get statistics for a specific admin - count all users owned by this admin and provide breakdowns."""
         try:
             # Query only this admin's users directly from API
             admin_users = await self.get_users(admin_username)
             
-            # Filter out deleted/expired users and count only active/valid users
-            valid_users = []
+            # Count all users and breakdown by status
+            total_users = len(admin_users)
+            counts_by_status: Dict[str, int] = {}
+            active_users = 0
             for user in admin_users:
-                # Check if user is not expired
-                if user.expire is None or user.expire > datetime.now().timestamp():
-                    # Check if user status is not disabled/deleted
-                    if user.status in ["active", "limited"]:
-                        valid_users.append(user)
+                status_key = (user.status or "unknown").lower()
+                counts_by_status[status_key] = counts_by_status.get(status_key, 0) + 1
+                if status_key == "active":
+                    active_users += 1
             
-            total_users = len(valid_users)
-            active_users = len([u for u in valid_users if u.status == "active"])
+            # Extra counters
+            now_ts = datetime.now().timestamp()
+            expired_count = 0
+            quota_full_count = 0
+            disabled_count = counts_by_status.get("disabled", 0)
+            for user in admin_users:
+                if user.expire is not None and user.expire <= now_ts:
+                    expired_count += 1
+                if user.data_limit is not None:
+                    used_now = user.used_traffic or 0
+                    lifetime_used = user.lifetime_used_traffic or 0
+                    if used_now >= user.data_limit or lifetime_used >= user.data_limit:
+                        quota_full_count += 1
             
-            # Calculate total traffic used (sum of upload and download for each user)
-            total_traffic_used = 0
-            for user in valid_users:
-                # Sum reported traffic usage
-                user_total_usage = user.used_traffic + (user.lifetime_used_traffic or 0)
-                total_traffic_used += user_total_usage
+            # Calculate total current period traffic used (use used_traffic only to avoid double counting)
+            total_traffic_used = sum((u.used_traffic or 0) for u in admin_users)
             
             # Time usage is not aggregated from users; returned as 0 here
             total_time_used = 0
@@ -563,7 +586,13 @@ class MarzbanAPI:
                 total_users=total_users,
                 active_users=active_users,
                 total_traffic_used=total_traffic_used,
-                total_time_used=total_time_used
+                total_time_used=total_time_used,
+                counts_by_status=counts_by_status,
+                counts_extra={
+                    "expired": expired_count,
+                    "quota_full": quota_full_count,
+                    "disabled": disabled_count
+                }
             )
             
         except Exception as e:

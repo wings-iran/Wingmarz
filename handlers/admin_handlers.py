@@ -121,7 +121,15 @@ async def show_admin_info(message_or_callback: Message | CallbackQuery, admin: A
         admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
         admin_stats = await admin_api.get_admin_stats()
         
-        user_percentage = (admin_stats.total_users / admin.max_users) * 100 if admin.max_users > 0 else 0
+        # Use historical peak users when assessing percentage
+        try:
+            peak_users = max(int(getattr(admin, 'users_historical_peak', 0) or 0), int(admin_stats.total_users or 0))
+            if peak_users != (getattr(admin, 'users_historical_peak', 0) or 0):
+                await db.update_admin(admin.id, users_historical_peak=peak_users)
+        except Exception:
+            peak_users = admin_stats.total_users
+
+        user_percentage = (peak_users / admin.max_users) * 100 if admin.max_users > 0 else 0
         traffic_percentage = (admin_stats.total_traffic_used / admin.max_total_traffic) * 100 if admin.max_total_traffic > 0 else 0
         
         now = datetime.utcnow()
@@ -133,6 +141,16 @@ async def show_admin_info(message_or_callback: Message | CallbackQuery, admin: A
         
         panel_name = admin.admin_name or admin.marzban_username
         
+        # Compose detailed users breakdown
+        try:
+            expired_c = (admin_stats.counts_extra or {}).get("expired", 0)
+            quota_full_c = (admin_stats.counts_extra or {}).get("quota_full", 0)
+            disabled_c = (admin_stats.counts_extra or {}).get("disabled", 0)
+            active_c = (admin_stats.counts_by_status or {}).get("active", 0)
+            users_breakdown = f"(فعال: {active_c}, منقضی: {expired_c}, پرحجم: {quota_full_c}, غیرفعال: {disabled_c})"
+        except Exception:
+            users_breakdown = ""
+
         text = (
             f"👤 **اطلاعات پنل: {panel_name}**\n\n"
             f"- **نام کاربری مرزبان:** `{admin.marzban_username}`\n"
@@ -140,6 +158,8 @@ async def show_admin_info(message_or_callback: Message | CallbackQuery, admin: A
             f"- **تاریخ ایجاد:** {admin.created_at.strftime('%Y-%m-%d')}\n\n"
             f"📊 **محدودیت‌ها و استفاده:**\n"
             f"- **کاربران:** {admin_stats.total_users}/{admin.max_users} ({user_percentage:.1f}%)\n"
+            f"  ├ فعلی: {admin_stats.total_users} {users_breakdown}\n"
+            f"  └ اوج تاریخی: {peak_users}\n"
             f"- **ترافیک:** {await format_traffic_size(admin_stats.total_traffic_used)} / {await format_traffic_size(admin.max_total_traffic)} ({traffic_percentage:.1f}%)\n"
             f"- **اعتبار زمانی:** {await format_time_duration(remaining_time_seconds)} مانده ({time_percentage:.1f}%)"
         )
@@ -400,13 +420,72 @@ async def admin_renew_panel(callback: CallbackQuery, state: FSMContext):
     await state.update_data(current_admin_id=admin_id)
     
     rates = await db.get_billing_rates()
+    # Determine renewability mode from origin plan
+    try:
+        from database import db
+        plan = await db.get_plan_by_id(getattr(admin, 'origin_plan_id', 0) or 0)
+        allow_incremental = bool(getattr(plan, 'allow_incremental_renewal', True)) if plan else True
+    except Exception:
+        allow_incremental = True
+
+    if allow_incremental:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=f"➕ حجم (1GB = {rates['per_gb_toman']:,} ت)", callback_data=f"admin_renew_traffic_{admin_id}")],
+            [InlineKeyboardButton(text=f"➕ زمان (30 روز = {rates['per_30days_toman']:,} ت)", callback_data=f"admin_renew_time_{admin_id}")],
+            [InlineKeyboardButton(text=f"➕ کاربر (1 کاربر = {rates['per_user_toman']:,} ت)", callback_data=f"admin_renew_users_{admin_id}")],
+            [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="admin_renew")]
+        ])
+        intro = config.MESSAGES.get("renew_intro", "🔄 تمدید/افزایش محدودیت‌ها (تدریجی مجاز)")
+    else:
+        kb = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="🔁 تمدید کامل پلن", callback_data=f"admin_full_renew_{admin_id}")],
+            [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="admin_renew")]
+        ])
+        intro = "🔄 تمدید کامل پلن (پرداخت کل هزینه پلن)"
+    await callback.message.edit_text(intro, reply_markup=kb)
+    await callback.answer()
+
+
+@admin_router.callback_query(F.data.startswith("admin_full_renew_"))
+async def admin_full_renew(callback: CallbackQuery):
+    admin_id = int(callback.data.split("_")[-1])
+    admin = await db.get_admin_by_id(admin_id)
+    if not admin or admin.user_id != callback.from_user.id:
+        await callback.answer("پنل یافت نشد.", show_alert=True)
+        return
+    plan = await db.get_plan_by_id(getattr(admin, 'origin_plan_id', 0) or 0)
+    if not plan:
+        await callback.answer("پلن مبدا یافت نشد.", show_alert=True)
+        return
+    order_id = await db.add_order(callback.from_user.id, plan_id=plan.id, price_snapshot=plan.price, plan_name_snapshot=f"تمدید کامل - {plan.name}")
+    if not order_id:
+        await callback.answer("خطا در ثبت سفارش تمدید.", show_alert=True)
+        return
+    await db.update_order(
+        order_id,
+        order_type="renew",
+        target_admin_id=admin_id,
+        delta_traffic_bytes=plan.traffic_limit_bytes,
+        delta_time_seconds=plan.time_limit_seconds,
+        delta_users=None
+    )
+    cards = await db.get_cards(only_active=True)
+    lines = [
+        f"✅ سفارش تمدید کامل ثبت شد.\n\nشناسه سفارش: {order_id}\nپلن: {plan.name}\nقیمت: {plan.price:,} تومان\n",
+        config.MESSAGES["public_payment_instructions"],
+        "",
+        "کارت‌های فعال:",
+    ]
+    if not cards:
+        lines.append("— فعلاً کارتی ثبت نشده. لطفاً با پشتیبانی تماس بگیرید.")
+    else:
+        for c in cards:
+            lines.append(f"• {c.get('bank_name','بانک')} | {c.get('card_number','---- ---- ---- ----')} | {c.get('holder_name','')} ")
     kb = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text=f"➕ حجم (1GB = {rates['per_gb_toman']:,} ت)", callback_data=f"admin_renew_traffic_{admin_id}")],
-        [InlineKeyboardButton(text=f"➕ زمان (30 روز = {rates['per_30days_toman']:,} ت)", callback_data=f"admin_renew_time_{admin_id}")],
-        [InlineKeyboardButton(text=f"➕ کاربر (1 کاربر = {rates['per_user_toman']:,} ت)", callback_data=f"admin_renew_users_{admin_id}")],
-        [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="admin_renew")]
+        [InlineKeyboardButton(text=config.BUTTONS["mark_paid"], callback_data=f"admin_mark_paid_{order_id}")],
+        [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data=f"admin_renew_panel_{admin_id}")]
     ])
-    await callback.message.edit_text(config.MESSAGES.get("renew_intro", "🔄 تمدید/افزایش محدودیت‌ها"), reply_markup=kb)
+    await callback.message.edit_text("\n".join(lines), reply_markup=kb)
     await callback.answer()
 
 
