@@ -58,6 +58,7 @@ class MarzbanUserModel(BaseModel):
 class AdminStatsModel(BaseModel):
     total_users: int = 0
     active_users: int = 0
+    consumed_users: int = 0
     total_traffic_used: int = 0
     total_time_used: int = 0
     usage_percentage: Dict[str, float] = Field(default_factory=dict)
