@@ -29,7 +29,7 @@ EXPOSE 8000
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python3 test_bot.py || exit 1
+    CMD python3 health_check.py || exit 1
 
 # Run the bot
 CMD ["python3", "bot.py"]

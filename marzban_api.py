@@ -165,20 +165,26 @@ class MarzbanAdminAPI:
                 if status_key == "active":
                     active_users += 1
             
-            # Extra counters
+            # Extra counters and consumed users
             now_ts = datetime.now().timestamp()
             expired_count = 0
             quota_full_count = 0
             disabled_count = counts_by_status.get("disabled", 0)
+            consumed_users = 0
             for user in admin_users:
-                if user.expire is not None and user.expire <= now_ts:
-                    expired_count += 1
-                # Quota full if data_limit set and used or lifetime_used reach/exceed limit
+                status_key = (user.status or "unknown").lower()
+                is_expired = (user.expire is not None and user.expire <= now_ts)
+                is_quota_full = False
                 if user.data_limit is not None:
                     used_now = user.used_traffic or 0
                     lifetime_used = user.lifetime_used_traffic or 0
-                    if used_now >= user.data_limit or lifetime_used >= user.data_limit:
-                        quota_full_count += 1
+                    is_quota_full = (used_now >= user.data_limit or lifetime_used >= user.data_limit)
+                if is_expired:
+                    expired_count += 1
+                if is_quota_full:
+                    quota_full_count += 1
+                if status_key == "active" and not is_expired and not is_quota_full:
+                    consumed_users += 1
             
             # Calculate total current period traffic used (use used_traffic only to avoid double counting)
             total_traffic_used = sum((u.used_traffic or 0) for u in admin_users)
@@ -189,6 +195,7 @@ class MarzbanAdminAPI:
             return AdminStatsModel(
                 total_users=total_users,
                 active_users=active_users,
+                consumed_users=consumed_users,
                 total_traffic_used=total_traffic_used,
                 total_time_used=total_time_used,
                 counts_by_status=counts_by_status,
@@ -562,19 +569,26 @@ class MarzbanAPI:
                 if status_key == "active":
                     active_users += 1
             
-            # Extra counters
+            # Extra counters and consumed users
             now_ts = datetime.now().timestamp()
             expired_count = 0
             quota_full_count = 0
             disabled_count = counts_by_status.get("disabled", 0)
+            consumed_users = 0
             for user in admin_users:
-                if user.expire is not None and user.expire <= now_ts:
-                    expired_count += 1
+                status_key = (user.status or "unknown").lower()
+                is_expired = (user.expire is not None and user.expire <= now_ts)
+                is_quota_full = False
                 if user.data_limit is not None:
                     used_now = user.used_traffic or 0
                     lifetime_used = user.lifetime_used_traffic or 0
-                    if used_now >= user.data_limit or lifetime_used >= user.data_limit:
-                        quota_full_count += 1
+                    is_quota_full = (used_now >= user.data_limit or lifetime_used >= user.data_limit)
+                if is_expired:
+                    expired_count += 1
+                if is_quota_full:
+                    quota_full_count += 1
+                if status_key == "active" and not is_expired and not is_quota_full:
+                    consumed_users += 1
             
             # Calculate total current period traffic used (use used_traffic only to avoid double counting)
             total_traffic_used = sum((u.used_traffic or 0) for u in admin_users)
@@ -585,6 +599,7 @@ class MarzbanAPI:
             return AdminStatsModel(
                 total_users=total_users,
                 active_users=active_users,
+                consumed_users=consumed_users,
                 total_traffic_used=total_traffic_used,
                 total_time_used=total_time_used,
                 counts_by_status=counts_by_status,

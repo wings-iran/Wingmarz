@@ -129,7 +129,8 @@ async def show_admin_info(message_or_callback: Message | CallbackQuery, admin: A
         except Exception:
             peak_users = admin_stats.total_users
 
-        user_percentage = (peak_users / admin.max_users) * 100 if admin.max_users > 0 else 0
+        # Adjust percentage to reflect consumed users (active, not expired, not quota-full)
+        user_percentage = (getattr(admin_stats, 'consumed_users', 0) / admin.max_users) * 100 if admin.max_users > 0 else 0
         traffic_percentage = (admin_stats.total_traffic_used / admin.max_total_traffic) * 100 if admin.max_total_traffic > 0 else 0
         
         now = datetime.utcnow()
@@ -157,7 +158,7 @@ async def show_admin_info(message_or_callback: Message | CallbackQuery, admin: A
             f"- **وضعیت:** {'✅ فعال' if admin.is_active else '❌ غیرفعال'}\n"
             f"- **تاریخ ایجاد:** {admin.created_at.strftime('%Y-%m-%d')}\n\n"
             f"📊 **محدودیت‌ها و استفاده:**\n"
-            f"- **کاربران:** {admin_stats.total_users}/{admin.max_users} ({user_percentage:.1f}%)\n"
+            f"- **کاربران:** {getattr(admin_stats, 'consumed_users', 0)}/{admin.max_users} ({user_percentage:.1f}%)\n"
             f"  ├ فعلی: {admin_stats.total_users} {users_breakdown}\n"
             f"  └ اوج تاریخی: {peak_users}\n"
             f"- **ترافیک:** {await format_traffic_size(admin_stats.total_traffic_used)} / {await format_traffic_size(admin.max_total_traffic)} ({traffic_percentage:.1f}%)\n"
