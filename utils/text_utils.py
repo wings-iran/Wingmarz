@@ -3,18 +3,24 @@ import html
 
 
 _BOLD_MD_PATTERN = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
+_CODE_MD_PATTERN = re.compile(r"`([^`]+)`")
 
 
 def convert_markdown_bold_to_html(text: str) -> str:
     """
-    Convert Markdown-style bold (**text**) to HTML (<b>text</b>) for Telegram HTML parse mode.
+    Convert simple Markdown (**bold**, `code`) to Telegram HTML (<b>, <code>).
 
-    Only transforms balanced pairs and leaves other content untouched.
+    - Escapes HTML first to avoid injection
+    - Then replaces Markdown tokens with HTML tags
     """
     if not isinstance(text, str):
         return text
     escaped = html.escape(text, quote=False)
-    if "**" not in escaped:
-        return escaped
-    return _BOLD_MD_PATTERN.sub(r"<b>\1</b>", escaped)
+    # Inline code
+    if "`" in escaped:
+        escaped = _CODE_MD_PATTERN.sub(r"<code>\1</code>", escaped)
+    # Bold
+    if "**" in escaped:
+        escaped = _BOLD_MD_PATTERN.sub(r"<b>\1</b>", escaped)
+    return escaped
 
