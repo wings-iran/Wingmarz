@@ -239,8 +239,8 @@ async def confirm_import_admin(callback: CallbackQuery, state: FSMContext):
         await callback.answer("غیرمجاز", show_alert=True)
         return
     # Target user who will own this imported panel in the bot
-    user_id = data.get('target_user_id') or callback.from_user.id
     data = await state.get_data()
+    user_id = data.get('target_user_id') or callback.from_user.id
     await state.clear()
     # Validate credentials by trying to fetch stats
     try:
