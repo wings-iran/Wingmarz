@@ -461,7 +461,14 @@ async def admin_full_renew(callback: CallbackQuery):
     if not order_id:
         await callback.answer("خطا در ثبت سفارش تمدید.", show_alert=True)
         return
-    await db.update_order(order_id, order_type="renew", target_admin_id=admin_id, delta_traffic_bytes=plan.traffic_limit_bytes, delta_time_seconds=plan.time_limit_seconds, delta_users=plan.max_users)
+    await db.update_order(
+        order_id,
+        order_type="renew",
+        target_admin_id=admin_id,
+        delta_traffic_bytes=plan.traffic_limit_bytes,
+        delta_time_seconds=plan.time_limit_seconds,
+        delta_users=None
+    )
     cards = await db.get_cards(only_active=True)
     lines = [
         f"✅ سفارش تمدید کامل ثبت شد.\n\nشناسه سفارش: {order_id}\nپلن: {plan.name}\nقیمت: {plan.price:,} تومان\n",
