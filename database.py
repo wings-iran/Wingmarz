@@ -60,7 +60,8 @@ class Database:
                     deactivated_reason TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    users_historical_peak INTEGER DEFAULT 0
+                    users_historical_peak INTEGER DEFAULT 0,
+                    origin_plan_id INTEGER
                 )
             """)
             
@@ -110,6 +111,11 @@ class Database:
                 await db.execute("ALTER TABLE admins ADD COLUMN users_historical_peak INTEGER DEFAULT 0")
             except aiosqlite.OperationalError:
                 pass  # Column already exists
+            # Add origin plan id if missing
+            try:
+                await db.execute("ALTER TABLE admins ADD COLUMN origin_plan_id INTEGER")
+            except aiosqlite.OperationalError:
+                pass
 
             # Create usage_reports table
             await db.execute("""
@@ -147,7 +153,8 @@ class Database:
                     time_limit_seconds INTEGER,
                     max_users INTEGER,
                     price INTEGER DEFAULT 0,
-                    is_active BOOLEAN DEFAULT 1
+                    is_active BOOLEAN DEFAULT 1,
+                    allow_incremental_renewal BOOLEAN DEFAULT 1
                 )
             """)
 
@@ -180,6 +187,10 @@ class Database:
                 pass  # Column already exists or table was just created
             try:
                 await db.execute("ALTER TABLE plans ADD COLUMN plan_type TEXT DEFAULT 'both'")
+            except aiosqlite.OperationalError:
+                pass
+            try:
+                await db.execute("ALTER TABLE plans ADD COLUMN allow_incremental_renewal BOOLEAN DEFAULT 1")
             except aiosqlite.OperationalError:
                 pass
 
@@ -313,13 +324,13 @@ class Database:
                                       login_url, username, first_name, last_name, 
                                       max_users, max_total_time, max_total_traffic, validity_days,
                                       is_active, original_password, deactivated_at, deactivated_reason,
-                                      users_historical_peak)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                      users_historical_peak, origin_plan_id)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (admin.user_id, admin.admin_name, admin.marzban_username, admin.marzban_password,
                       admin.login_url, admin.username, admin.first_name, admin.last_name,
                       admin.max_users, admin.max_total_time, admin.max_total_traffic, admin.validity_days,
                       admin.is_active, admin.original_password, admin.deactivated_at, admin.deactivated_reason,
-                      getattr(admin, 'users_historical_peak', 0)))
+                      getattr(admin, 'users_historical_peak', 0), getattr(admin, 'origin_plan_id', None)))
                 await db.commit()
                 return True
         except aiosqlite.IntegrityError as e:
@@ -691,9 +702,9 @@ class Database:
         try:
             async with aiosqlite.connect(self.db_path) as db:
                 await db.execute("""
-                    INSERT INTO plans (name, traffic_limit_bytes, time_limit_seconds, max_users, price, is_active)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                """, (plan.name, plan.traffic_limit_bytes, plan.time_limit_seconds, plan.max_users, plan.price, plan.is_active))
+                    INSERT INTO plans (name, traffic_limit_bytes, time_limit_seconds, max_users, price, is_active, allow_incremental_renewal)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (plan.name, plan.traffic_limit_bytes, plan.time_limit_seconds, plan.max_users, plan.price, plan.is_active, 1 if getattr(plan, 'allow_incremental_renewal', True) else 0))
                 await db.commit()
                 return True
         except Exception as e:

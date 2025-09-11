@@ -24,6 +24,7 @@ class AdminModel(BaseModel):
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
     users_historical_peak: int = Field(default=0, ge=0)
+    origin_plan_id: Optional[int] = None
 
 
 class UsageReportModel(BaseModel):
@@ -85,3 +86,4 @@ class PlanModel(BaseModel):
     max_users: Optional[int] = None
     price: int = 0  # in Toman
     is_active: bool = Field(default=True)
+    allow_incremental_renewal: bool = Field(default=True)

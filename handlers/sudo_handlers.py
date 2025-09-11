@@ -63,6 +63,7 @@ class CreatePlanStates(StatesGroup):
     waiting_for_time = State()
     waiting_for_max_users = State()
     waiting_for_price = State()
+    waiting_for_renew_mode = State()
 
 
 class CardStates(StatesGroup):
@@ -3481,7 +3482,8 @@ async def order_approve(callback: CallbackQuery):
         max_total_time=(plan.time_limit_seconds if plan.time_limit_seconds is not None else days_to_seconds(36500)),
         max_total_traffic=plan.traffic_limit_bytes or 0,
         validity_days=(plan.time_limit_seconds // 86400) if plan.time_limit_seconds else 36500,
-        is_active=True
+        is_active=True,
+        origin_plan_id=plan.id
     )
     ok = await db.add_admin(admin_model)
     issued_admin = None
@@ -3760,21 +3762,40 @@ async def sales_enter_price(message: Message, state: FSMContext):
     traffic_limit_bytes = data.get("traffic_limit_bytes") if plan_type != "time" else data.get("traffic_limit_bytes", None)
     time_limit_seconds = data.get("time_limit_seconds") if plan_type != "volume" else data.get("time_limit_seconds", None)
     max_users = data.get("max_users")
+    await state.update_data(price=price, name=name, traffic_limit_bytes=traffic_limit_bytes, time_limit_seconds=time_limit_seconds, max_users=max_users)
+    await state.set_state(CreatePlanStates.waiting_for_renew_mode)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ تمدید تدریجی مجاز است", callback_data="sales_renew_mode_incremental")],
+        [InlineKeyboardButton(text="❌ فقط تمدید کامل", callback_data="sales_renew_mode_full")]
+    ])
+    await message.answer("حالت تمدید این پلن را انتخاب کنید:", reply_markup=kb)
+
+
+@sudo_router.callback_query(F.data.startswith("sales_renew_mode_"))
+async def sales_renew_mode_selected(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    mode = callback.data.split("_")[-1]
+    allow_incremental = True if mode == "incremental" else False
+    data = await state.get_data()
     from models.schemas import PlanModel
     plan = PlanModel(
-        name=name,
-        traffic_limit_bytes=traffic_limit_bytes,
-        time_limit_seconds=time_limit_seconds,
-        max_users=max_users,
-        price=price,
-        is_active=True
+        name=data.get("name"),
+        traffic_limit_bytes=data.get("traffic_limit_bytes"),
+        time_limit_seconds=data.get("time_limit_seconds"),
+        max_users=data.get("max_users"),
+        price=data.get("price"),
+        is_active=True,
+        allow_incremental_renewal=allow_incremental
     )
     ok = await db.add_plan(plan)
-    if ok:
-        await message.answer("✅ پلن با موفقیت اضافه شد.")
-    else:
-        await message.answer("❌ خطا در افزودن پلن.")
     await state.clear()
+    if ok:
+        await callback.message.edit_text("✅ پلن با موفقیت اضافه شد.")
+    else:
+        await callback.message.edit_text("❌ خطا در افزودن پلن.")
+    await callback.answer()
 
 
 @sudo_router.callback_query(F.data == "sales_delete")
