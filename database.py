@@ -59,7 +59,8 @@ class Database:
                     deactivated_at TIMESTAMP,
                     deactivated_reason TEXT,
                     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    users_historical_peak INTEGER DEFAULT 0
                 )
             """)
             
@@ -101,6 +102,12 @@ class Database:
                 
             try:
                 await db.execute("ALTER TABLE admins ADD COLUMN deactivated_reason TEXT")
+            except aiosqlite.OperationalError:
+                pass  # Column already exists
+
+            # Add historical users peak column if missing
+            try:
+                await db.execute("ALTER TABLE admins ADD COLUMN users_historical_peak INTEGER DEFAULT 0")
             except aiosqlite.OperationalError:
                 pass  # Column already exists
 
@@ -275,7 +282,8 @@ class Database:
                 deactivated_at TIMESTAMP,
                 deactivated_reason TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                users_historical_peak INTEGER DEFAULT 0
             )
         """)
         
@@ -284,11 +292,11 @@ class Database:
             INSERT INTO admins_new (id, user_id, admin_name, marzban_username, marzban_password, login_url,
                                   username, first_name, last_name, max_users, max_total_time, 
                                   max_total_traffic, validity_days, is_active, original_password, 
-                                  deactivated_at, deactivated_reason, created_at, updated_at)
+                                  deactivated_at, deactivated_reason, created_at, updated_at, users_historical_peak)
             SELECT id, user_id, admin_name, marzban_username, marzban_password, NULL,
                    username, first_name, last_name, max_users, max_total_time, 
                    max_total_traffic, validity_days, is_active, original_password, 
-                   deactivated_at, deactivated_reason, created_at, updated_at
+                   deactivated_at, deactivated_reason, created_at, updated_at, 0
             FROM admins
         """)
         
@@ -304,12 +312,14 @@ class Database:
                     INSERT INTO admins (user_id, admin_name, marzban_username, marzban_password,
                                       login_url, username, first_name, last_name, 
                                       max_users, max_total_time, max_total_traffic, validity_days,
-                                      is_active, original_password, deactivated_at, deactivated_reason)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                      is_active, original_password, deactivated_at, deactivated_reason,
+                                      users_historical_peak)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (admin.user_id, admin.admin_name, admin.marzban_username, admin.marzban_password,
                       admin.login_url, admin.username, admin.first_name, admin.last_name,
                       admin.max_users, admin.max_total_time, admin.max_total_traffic, admin.validity_days,
-                      admin.is_active, admin.original_password, admin.deactivated_at, admin.deactivated_reason))
+                      admin.is_active, admin.original_password, admin.deactivated_at, admin.deactivated_reason,
+                      getattr(admin, 'users_historical_peak', 0)))
                 await db.commit()
                 return True
         except aiosqlite.IntegrityError as e:

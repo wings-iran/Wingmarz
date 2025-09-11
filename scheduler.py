@@ -43,7 +43,15 @@ class MonitoringScheduler:
 
             # نسبت استفاده‌ها به‌صورت 0..1 (یکسان‌سازی مقیاس)
             time_percentage = elapsed_seconds / admin.max_total_time if admin.max_total_time > 0 else 0
-            user_percentage = (admin_stats.total_users / admin.max_users) if admin.max_users > 0 else 0
+            # Use historical peak users for limit checks
+            try:
+                peak_users = max(int(getattr(admin, 'users_historical_peak', 0) or 0), int(admin_stats.total_users or 0))
+                if peak_users != (getattr(admin, 'users_historical_peak', 0) or 0):
+                    await db.update_admin(admin.id, users_historical_peak=peak_users)
+            except Exception:
+                peak_users = admin_stats.total_users
+
+            user_percentage = (peak_users / admin.max_users) if admin.max_users > 0 else 0
             traffic_percentage = (admin_stats.total_traffic_used / admin.max_total_traffic) if admin.max_total_traffic > 0 else 0
 
             limits_exceeded = (

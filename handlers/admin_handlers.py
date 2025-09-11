@@ -121,7 +121,15 @@ async def show_admin_info(message_or_callback: Message | CallbackQuery, admin: A
         admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
         admin_stats = await admin_api.get_admin_stats()
         
-        user_percentage = (admin_stats.total_users / admin.max_users) * 100 if admin.max_users > 0 else 0
+        # Use historical peak users when assessing percentage
+        try:
+            peak_users = max(int(getattr(admin, 'users_historical_peak', 0) or 0), int(admin_stats.total_users or 0))
+            if peak_users != (getattr(admin, 'users_historical_peak', 0) or 0):
+                await db.update_admin(admin.id, users_historical_peak=peak_users)
+        except Exception:
+            peak_users = admin_stats.total_users
+
+        user_percentage = (peak_users / admin.max_users) * 100 if admin.max_users > 0 else 0
         traffic_percentage = (admin_stats.total_traffic_used / admin.max_total_traffic) * 100 if admin.max_total_traffic > 0 else 0
         
         now = datetime.utcnow()
@@ -133,6 +141,16 @@ async def show_admin_info(message_or_callback: Message | CallbackQuery, admin: A
         
         panel_name = admin.admin_name or admin.marzban_username
         
+        # Compose detailed users breakdown
+        try:
+            expired_c = (admin_stats.counts_extra or {}).get("expired", 0)
+            quota_full_c = (admin_stats.counts_extra or {}).get("quota_full", 0)
+            disabled_c = (admin_stats.counts_extra or {}).get("disabled", 0)
+            active_c = (admin_stats.counts_by_status or {}).get("active", 0)
+            users_breakdown = f"(فعال: {active_c}, منقضی: {expired_c}, پرحجم: {quota_full_c}, غیرفعال: {disabled_c})"
+        except Exception:
+            users_breakdown = ""
+
         text = (
             f"👤 **اطلاعات پنل: {panel_name}**\n\n"
             f"- **نام کاربری مرزبان:** `{admin.marzban_username}`\n"
@@ -140,6 +158,8 @@ async def show_admin_info(message_or_callback: Message | CallbackQuery, admin: A
             f"- **تاریخ ایجاد:** {admin.created_at.strftime('%Y-%m-%d')}\n\n"
             f"📊 **محدودیت‌ها و استفاده:**\n"
             f"- **کاربران:** {admin_stats.total_users}/{admin.max_users} ({user_percentage:.1f}%)\n"
+            f"  ├ فعلی: {admin_stats.total_users} {users_breakdown}\n"
+            f"  └ اوج تاریخی: {peak_users}\n"
             f"- **ترافیک:** {await format_traffic_size(admin_stats.total_traffic_used)} / {await format_traffic_size(admin.max_total_traffic)} ({traffic_percentage:.1f}%)\n"
             f"- **اعتبار زمانی:** {await format_time_duration(remaining_time_seconds)} مانده ({time_percentage:.1f}%)"
         )

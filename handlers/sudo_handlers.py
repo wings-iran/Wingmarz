@@ -2122,8 +2122,16 @@ async def get_admin_status_text() -> str:
                     admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
                     admin_stats = await admin_api.get_admin_stats()
                     
+                    # Update and use historical peak users to prevent deletion from reducing stats
+                    try:
+                        peak_users = max(int(getattr(admin, 'users_historical_peak', 0) or 0), int(admin_stats.total_users or 0))
+                        if peak_users != (getattr(admin, 'users_historical_peak', 0) or 0):
+                            await db.update_admin(admin.id, users_historical_peak=peak_users)
+                    except Exception:
+                        peak_users = admin_stats.total_users
+
                     # Calculate usage percentages (time based on real elapsed since panel creation)
-                    user_percentage = (admin_stats.total_users / admin.max_users * 100) if admin.max_users > 0 else 0
+                    user_percentage = (peak_users / admin.max_users * 100) if admin.max_users > 0 else 0
                     traffic_percentage = (admin_stats.total_traffic_used / admin.max_total_traffic * 100) if admin.max_total_traffic > 0 else 0
                     from datetime import datetime as _dt
                     created_at = admin.created_at or _dt.utcnow()
@@ -2131,6 +2139,16 @@ async def get_admin_status_text() -> str:
                     time_percentage = (elapsed_seconds / admin.max_total_time * 100) if admin.max_total_time > 0 else 0
                     
                     text += f"      👥 کاربران: {admin_stats.total_users}/{admin.max_users} ({user_percentage:.1f}%)\n"
+                    # Show detailed breakdown and peak
+                    try:
+                        expired_c = (admin_stats.counts_extra or {}).get("expired", 0)
+                        quota_full_c = (admin_stats.counts_extra or {}).get("quota_full", 0)
+                        disabled_c = (admin_stats.counts_extra or {}).get("disabled", 0)
+                        active_c = (admin_stats.counts_by_status or {}).get("active", 0)
+                        text += f"      ├ فعلی: {admin_stats.total_users} (فعال: {active_c}, منقضی: {expired_c}, پرحجم: {quota_full_c}, غیرفعال: {disabled_c})\n"
+                        text += f"      └ اوج تاریخی: {peak_users}\n"
+                    except Exception:
+                        pass
                     text += f"      📊 ترافیک: {await format_traffic_size(admin_stats.total_traffic_used)}/{await format_traffic_size(admin.max_total_traffic)} ({traffic_percentage:.1f}%)\n"
                     text += f"      ⏱️ زمان: {await format_time_duration(int(elapsed_seconds))}/{await format_time_duration(admin.max_total_time)} ({time_percentage:.1f}%)\n"
                     

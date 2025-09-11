@@ -23,6 +23,7 @@ class AdminModel(BaseModel):
     deactivated_reason: Optional[str] = None  # Reason for deactivation
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
+    users_historical_peak: int = Field(default=0, ge=0)
 
 
 class UsageReportModel(BaseModel):
@@ -59,6 +60,8 @@ class AdminStatsModel(BaseModel):
     total_traffic_used: int = 0
     total_time_used: int = 0
     usage_percentage: Dict[str, float] = Field(default_factory=dict)
+    counts_by_status: Dict[str, int] = Field(default_factory=dict)
+    counts_extra: Dict[str, int] = Field(default_factory=dict)
 
 
 class LimitCheckResult(BaseModel):
