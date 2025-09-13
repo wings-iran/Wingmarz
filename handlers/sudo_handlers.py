@@ -1763,7 +1763,7 @@ async def confirm_deactivate_panel(callback: CallbackQuery):
         return
     
     # Completely delete the panel and all users for manual deactivation
-    success = await delete_admin_panel_completely(admin_id, "غیرفعالسازی دستی توسط سودو")
+    success, err = await delete_admin_panel_completely(admin_id, "غیرفعالسازی دستی توسط سودو")
     
     if success:
         panel_name = admin.admin_name or admin.marzban_username or f"Panel-{admin.id}"
@@ -1777,7 +1777,7 @@ async def confirm_deactivate_panel(callback: CallbackQuery):
         )
     else:
         await callback.message.edit_text(
-            "❌ خطا در حذف پنل.",
+            ("❌ خطا در حذف پنل." + (f"\n\nجزئیات: {err}" if err else "")),
             reply_markup=get_sudo_keyboard()
         )
     
@@ -2803,38 +2803,61 @@ async def deactivate_admin_and_users(admin_user_id: int, reason: str = "Limit ex
         return False
 
 
-async def delete_admin_panel_completely(admin_id: int, reason: str = "غیرفعالسازی دستی توسط سودو") -> bool:
-    """Completely delete admin panel and all their users from both Marzban and database (for manual deactivation)."""
+async def delete_admin_panel_completely(admin_id: int, reason: str = "غیرفعالسازی دستی توسط سودو"):
+    """Completely delete admin panel and all their users from both Marzban and database (atomic with retry).
+
+    Returns:
+        (success: bool, error_message: str | None)
+    """
     try:
         admin = await db.get_admin_by_id(admin_id)
         if not admin:
-            return False
+            return False, "پنل در دیتابیس یافت نشد."
         
         # Store details for logging
         admin_username = admin.marzban_username
         user_count = 0
+        last_error: str | None = None
         
         # Step 1: Completely delete admin and all users from Marzban panel
+        marzban_success = True if not admin.marzban_username else False
         if admin.marzban_username:
+            # Try fetching user count (best-effort)
             try:
-                # Get user count before deletion for logging
                 if admin.marzban_password:
                     admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
                     users = await admin_api.get_users()
                     user_count = len(users)
-                
-                # Completely delete admin and all users from Marzban
-                marzban_success = await marzban_api.delete_admin_completely(admin.marzban_username)
-                
-                if marzban_success:
-                    logger.info(f"Admin {admin.marzban_username} and {user_count} users deleted from Marzban")
-                else:
-                    logger.warning(f"Failed to delete admin {admin.marzban_username} from Marzban")
-                    
-            except Exception as e:
-                logger.error(f"Error deleting admin {admin.marzban_username} from Marzban: {e}")
+            except Exception:
+                pass
+
+            # Retry deletion up to 3 times
+            attempts = 3
+            for attempt in range(1, attempts + 1):
+                try:
+                    marzban_success = await marzban_api.delete_admin_completely(admin.marzban_username)
+                    if marzban_success:
+                        logger.info(f"Admin {admin.marzban_username} and {user_count} users deleted from Marzban (attempt {attempt})")
+                        last_error = None
+                        break
+                    else:
+                        last_error = f"API returned failure on attempt {attempt}"
+                        logger.warning(f"Failed to delete admin {admin.marzban_username} from Marzban (attempt {attempt})")
+                except Exception as e:
+                    last_error = f"Exception on attempt {attempt}: {type(e).__name__}: {e}"
+                    logger.error(f"Error deleting admin {admin.marzban_username} from Marzban: {e}")
+                # Small backoff between attempts
+                try:
+                    await asyncio.sleep(0.7 * attempt)
+                except Exception:
+                    pass
+
+        # If Marzban deletion failed, do not remove from DB
+        if not marzban_success:
+            message = "حذف ادمین در مرزبان ناموفق بود. دیتابیس تغییری نکرد." + (f"\nجزئیات: {last_error}" if last_error else "")
+            return False, message
         
-        # Step 2: Remove admin from database completely
+        # Step 2 (atomic): Remove admin from database completely only if Marzban deletion succeeded
         db_success = await db.remove_admin_by_id(admin_id)
         
         if db_success:
@@ -2851,14 +2874,14 @@ async def delete_admin_panel_completely(admin_id: int, reason: str = "غیرفع
             await db.add_log(log)
             
             logger.info(f"Admin panel {admin_id} ({admin_username}) completely deleted from both Marzban and database")
-            return True
+            return True, None
         else:
             logger.error(f"Failed to delete admin panel {admin_id} from database")
-            return False
+            return False, "حذف رکورد پنل در دیتابیس ناموفق بود."
         
     except Exception as e:
         logger.error(f"Error completely deleting admin panel {admin_id}: {e}")
-        return False
+        return False, f"خطای غیرمنتظره: {type(e).__name__}: {e}"
 
 
 async def deactivate_admin_panel_by_id(admin_id: int, reason: str = "Limit exceeded") -> bool:
@@ -3218,8 +3241,8 @@ async def manage_action_delete(callback: CallbackQuery):
         return
     admin_id = int(callback.data.split("_")[-1])
     try:
-        success = await delete_admin_panel_completely(admin_id, "حذف دستی توسط سودو")
-        text = "✅ پنل حذف شد." if success else "❌ خطا در حذف پنل."
+        success, err = await delete_admin_panel_completely(admin_id, "حذف دستی توسط سودو")
+        text = "✅ پنل حذف شد." if success else ("❌ خطا در حذف پنل." + (f"\n\nجزئیات: {err}" if err else ""))
     except Exception as e:
         text = f"❌ خطا در حذف پنل: {e}"
     await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_manage_admins")]]))
