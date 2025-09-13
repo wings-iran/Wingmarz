@@ -2461,9 +2461,7 @@ async def admin_status_command(message: Message):
         from handlers.public_handlers import get_public_main_keyboard
         await message.answer("به ربات خوش آمدید!", reply_markup=get_public_main_keyboard())
         return
-    
-    text = await get_admin_status_text()
-    await message.answer(text, reply_markup=get_sudo_keyboard())
+    await show_admin_status_page(message, 1)
 
 
 @sudo_router.callback_query(F.data == "activate_admin")
