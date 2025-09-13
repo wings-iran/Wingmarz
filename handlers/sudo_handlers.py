@@ -2231,15 +2231,133 @@ async def admin_status_callback(callback: CallbackQuery):
     if callback.from_user.id not in config.SUDO_ADMINS:
         await callback.answer("غیرمجاز", show_alert=True)
         return
-    
-    text = await get_admin_status_text()
-    
-    await callback.message.edit_text(
-        text,
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
-        ])
-    )
+    await show_admin_status_page(callback, 1)
+    await callback.answer()
+
+
+async def show_admin_status_page(message_or_callback: Message | CallbackQuery, page: int = 1):
+    if isinstance(message_or_callback, CallbackQuery):
+        chat = message_or_callback.message
+    else:
+        chat = message_or_callback
+    admins = await db.get_all_admins()
+    if not admins:
+        await chat.edit_text(
+            "❌ هیچ ادمینی یافت نشد.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]])
+        )
+        return
+    per_page = 30
+    total = len(admins)
+    max_page = (total + per_page - 1) // per_page
+    page = max(1, min(page, max_page))
+    start = (page - 1) * per_page
+    end = min(start + per_page, total)
+    page_admins = admins[start:end]
+
+    rows = []
+    for a in page_admins:
+        panel_name = a.admin_name or a.marzban_username or f"Panel {a.id}"
+        # Use last recorded traffic from usage_reports (per user_id)
+        try:
+            report = await db.get_latest_usage_report(a.user_id)
+            used_bytes = int(getattr(report, 'current_total_traffic', 0) or 0) if report else 0
+        except Exception:
+            used_bytes = 0
+        used_txt = await format_traffic_size(used_bytes)
+        btn_text = f"{panel_name} — {used_txt}"
+        rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"admin_status_detail_{a.id}_p{page}")])
+
+    nav_row = []
+    if page > 1:
+        nav_row.append(InlineKeyboardButton(text="⬅️ قبلی", callback_data=f"admin_status_page_{page-1}"))
+    if page < max_page:
+        nav_row.append(InlineKeyboardButton(text="بعدی ➡️", callback_data=f"admin_status_page_{page+1}"))
+    rows.append(nav_row or [InlineKeyboardButton(text=str(page), callback_data=f"admin_status_page_{page}")])
+    rows.append([InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")])
+
+    header = f"📊 لیست ادمین‌ها (صفحه {page}/{max_page})\n\nبرای مشاهده جزئیات، یکی را انتخاب کنید:"
+    try:
+        await chat.edit_text(header, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+    except Exception:
+        # Fallback to send new message if edit fails
+        await chat.answer(header, reply_markup=InlineKeyboardMarkup(inline_keyboard=rows))
+
+
+@sudo_router.callback_query(F.data.startswith("admin_status_page_"))
+async def admin_status_page_nav(callback: CallbackQuery):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    try:
+        page = int(callback.data.split("_")[-1])
+    except Exception:
+        page = 1
+    await show_admin_status_page(callback, page)
+    await callback.answer()
+
+
+@sudo_router.callback_query(F.data.startswith("admin_status_detail_"))
+async def admin_status_detail(callback: CallbackQuery):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    parts = callback.data.split("_")
+    try:
+        admin_id_part = parts[-2]
+        page_part = parts[-1]
+        admin_id = int(admin_id_part)
+        page = int(page_part[1:]) if page_part.startswith('p') else 1
+    except Exception:
+        await callback.answer("درک دستور نامعتبر است", show_alert=True)
+        return
+    admin = await db.get_admin_by_id(admin_id)
+    if not admin:
+        await callback.answer("پنل یافت نشد.", show_alert=True)
+        return
+    panel_name = admin.admin_name or admin.marzban_username or f"Panel {admin.id}"
+    try:
+        admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
+        admin_stats = await admin_api.get_admin_stats()
+        from datetime import datetime as _dt
+        created_at = admin.created_at or _dt.utcnow()
+        elapsed_seconds = max(0, (_dt.utcnow() - created_at).total_seconds())
+        # Percentages (respect unlimited sentinels)
+        user_percentage = (max(int(getattr(admin, 'users_historical_peak', 0) or 0), int(admin_stats.total_users or 0)) / admin.max_users * 100) if admin.max_users > 0 else 0
+        traffic_percentage = (admin_stats.total_traffic_used / admin.max_total_traffic * 100) if admin.max_total_traffic > 0 else 0
+        time_percentage = (elapsed_seconds / admin.max_total_time * 100) if admin.max_total_time > 0 else 0
+        # Display helpers
+        max_users_txt = "نامحدود" if ((admin.max_users or 0) >= 1000000 or (admin.max_users or 0) == 0) else f"{admin.max_users}"
+        max_traffic_txt = "نامحدود" if (admin.max_total_traffic or 0) == 0 else await format_traffic_size(admin.max_total_traffic)
+        max_time_txt = "نامحدود" if (admin.max_total_time or 0) == 0 or (admin.max_total_time or 0) >= (36500 * 24 * 60 * 60) else await format_time_duration(admin.max_total_time)
+        # Breakdown
+        try:
+            expired_c = (admin_stats.counts_extra or {}).get("expired", 0)
+            quota_full_c = (admin_stats.counts_extra or {}).get("quota_full", 0)
+            disabled_c = (admin_stats.counts_extra or {}).get("disabled", 0)
+            active_c = (admin_stats.counts_by_status or {}).get("active", 0)
+            users_breakdown = f"(فعال: {active_c}, منقضی: {expired_c}, پرحجم: {quota_full_c}, غیرفعال: {disabled_c})"
+        except Exception:
+            users_breakdown = ""
+        detail_text = (
+            f"👤 **اطلاعات پنل: {panel_name}**\n\n"
+            f"- **نام کاربری مرزبان:** `{admin.marzban_username}`\n"
+            f"- **وضعیت:** {'✅ فعال' if admin.is_active else '❌ غیرفعال'}\n"
+            f"- **تاریخ ایجاد:** {created_at.strftime('%Y-%m-%d')}\n\n"
+            f"📊 **محدودیت‌ها و استفاده:**\n"
+            f"- **کاربران:** {getattr(admin_stats, 'consumed_users', 0)}/{max_users_txt} ({user_percentage:.1f}%)\n"
+            f"  ├ فعلی: {admin_stats.total_users} {users_breakdown}\n"
+            f"- **ترافیک:** {await format_traffic_size(admin_stats.total_traffic_used)} / {max_traffic_txt} ({traffic_percentage:.1f}%)\n"
+            f"- **اعتبار زمانی:** {await format_time_duration(int(elapsed_seconds))} سپری‌شده ({time_percentage:.1f}%)\n"
+            f"  └ سقف: {max_time_txt}"
+        )
+    except Exception as e:
+        detail_text = f"❌ خطا در دریافت اطلاعات پنل: {e}"
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🔙 بازگشت به لیست", callback_data=f"admin_status_page_{page}")],
+        [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
+    ])
+    await callback.message.edit_text(detail_text, reply_markup=kb)
     await callback.answer()
 
 
