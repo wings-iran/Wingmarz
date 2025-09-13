@@ -179,18 +179,26 @@ async def import_admin_password(message: Message, state: FSMContext):
         return
     await state.update_data(marzban_password=password)
     await state.set_state(ImportAdminStates.waiting_for_traffic_volume)
-    await message.answer("محدودیت حجم (GB) را وارد کنید (مثلاً 100):")
+    await message.answer("محدودیت حجم (GB) را وارد کنید (مثلاً 100) یا «نامحدود» بفرستید:")
 
 @sudo_router.message(ImportAdminStates.waiting_for_traffic_volume, F.text)
 async def import_admin_traffic(message: Message, state: FSMContext):
     from utils.notify import gb_to_bytes
     try:
-        gb = float(message.text.strip().replace(',', '.'))
+        raw = message.text.strip()
+        lower = raw.lower()
+        # Accept unlimited keywords
+        if lower in ["نامحدود", "بدون محدودیت", "unlimited", "∞", "بي نهايت", "بی نهایت", "بی‌نهایت"]:
+            await state.update_data(max_total_traffic=0, traffic_unlimited=True)
+            await state.set_state(ImportAdminStates.waiting_for_validity_period)
+            await message.answer("محدودیت زمان (روز) را وارد کنید (مثلاً 30) یا «نامحدود» بفرستید:")
+            return
+        gb = float(raw.replace(',', '.'))
         if gb < 0:
             raise ValueError()
         await state.update_data(max_total_traffic=gb_to_bytes(gb))
         await state.set_state(ImportAdminStates.waiting_for_validity_period)
-        await message.answer("محدودیت زمان (روز) را وارد کنید (مثلاً 30):")
+        await message.answer("محدودیت زمان (روز) را وارد کنید (مثلاً 30) یا «نامحدود» بفرستید:")
     except Exception:
         await message.answer("فرمت حجم نامعتبر است. یک عدد مثل 100 وارد کنید:")
 
@@ -198,31 +206,53 @@ async def import_admin_traffic(message: Message, state: FSMContext):
 async def import_admin_time(message: Message, state: FSMContext):
     from utils.notify import days_to_seconds
     try:
-        days = int(message.text.strip())
+        raw = message.text.strip()
+        lower = raw.lower()
+        if lower in ["نامحدود", "بدون محدودیت", "unlimited", "∞", "بي نهايت", "بی نهایت", "بی‌نهایت"]:
+            # Use a large sentinel (100 years) for unlimited time
+            days = 36500
+            await state.update_data(max_total_time=days_to_seconds(days), validity_days=days, time_unlimited=True)
+            await state.set_state(ImportAdminStates.waiting_for_max_users)
+            await message.answer("حداکثر تعداد کاربران را وارد کنید (مثلاً 100) یا «نامحدود» بفرستید:")
+            return
+        days = int(raw)
         if days <= 0:
             raise ValueError()
         await state.update_data(max_total_time=days_to_seconds(days), validity_days=days)
         await state.set_state(ImportAdminStates.waiting_for_max_users)
-        await message.answer("حداکثر تعداد کاربران را وارد کنید (مثلاً 100):")
+        await message.answer("حداکثر تعداد کاربران را وارد کنید (مثلاً 100) یا «نامحدود» بفرستید:")
     except Exception:
         await message.answer("فرمت زمان نامعتبر است. یک عدد صحیح مثل 30 وارد کنید:")
 
 @sudo_router.message(ImportAdminStates.waiting_for_max_users, F.text)
 async def import_admin_max_users(message: Message, state: FSMContext):
     try:
-        max_users = int(message.text.strip())
+        raw = message.text.strip()
+        lower = raw.lower()
+        if lower in ["نامحدود", "بدون محدودیت", "unlimited", "∞", "بي نهايت", "بی نهایت", "بی‌نهایت"]:
+            max_users = 1000000  # Sentinel for unlimited users
+            await state.update_data(max_users=max_users, users_unlimited=True)
+        else:
+            max_users = int(raw)
         if max_users <= 0:
             raise ValueError()
-        await state.update_data(max_users=max_users)
+        if not lower in ["نامحدود", "بدون محدودیت", "unlimited", "∞", "بي نهايت", "بی نهایت", "بی‌نهایت"]:
+            await state.update_data(max_users=max_users)
         data = await state.get_data()
+        # Build human-readable summary respecting unlimited selections
+        traffic_b = data.get('max_total_traffic')
+        validity_days = data.get('validity_days')
+        traffic_txt = "نامحدود" if data.get('traffic_unlimited') or (traffic_b == 0) else f"{traffic_b} بایت"
+        time_txt = "نامحدود" if data.get('time_unlimited') or (validity_days and validity_days >= 36500) else f"{validity_days} روز"
+        users_txt = "نامحدود" if data.get('users_unlimited') or (max_users >= 1000000) else f"{max_users}"
         text = (
             "✅ تایید افزودن ادمین قبلی\n\n"
             f"نام: {data.get('admin_name') or '-'}\n"
             f"آیدی کاربر مقصد: {data.get('target_user_id','-')}\n"
             f"نام کاربری مرزبان: {data.get('marzban_username')}\n"
-            f"کاربر: {max_users}\n"
-            f"حجم: {data.get('max_total_traffic')} بایت\n"
-            f"زمان: {data.get('validity_days')} روز\n\n"
+            f"کاربر: {users_txt}\n"
+            f"حجم: {traffic_txt}\n"
+            f"زمان: {time_txt}\n\n"
             "برای ادامه تایید کنید."
         )
         kb = InlineKeyboardMarkup(inline_keyboard=[
@@ -2139,8 +2169,10 @@ async def get_admin_status_text() -> str:
                     elapsed_seconds = max(0, (_dt.utcnow() - created_at).total_seconds())
                     time_percentage = (elapsed_seconds / admin.max_total_time * 100) if admin.max_total_time > 0 else 0
                     
-                    text += f"      👥 کاربران: {admin_stats.total_users}/{admin.max_users} ({user_percentage:.1f}%)\n"
-                    # Show detailed breakdown and peak
+                    max_traffic_txt = "نامحدود" if (admin.max_total_traffic or 0) == 0 else await format_traffic_size(admin.max_total_traffic)
+                    max_time_txt = "نامحدود" if (admin.max_total_time or 0) == 0 else await format_time_duration(admin.max_total_time)
+                    max_users_txt = "نامحدود" if ((admin.max_users or 0) >= 1000000) else f"{admin.max_users}"
+                    text += f"      👥 کاربران: {admin_stats.total_users}/{max_users_txt} ({user_percentage:.1f}%)\n"
                     try:
                         expired_c = (admin_stats.counts_extra or {}).get("expired", 0)
                         quota_full_c = (admin_stats.counts_extra or {}).get("quota_full", 0)
@@ -2150,8 +2182,8 @@ async def get_admin_status_text() -> str:
                         text += f"      └ اوج تاریخی: {peak_users}\n"
                     except Exception:
                         pass
-                    text += f"      📊 ترافیک: {await format_traffic_size(admin_stats.total_traffic_used)}/{await format_traffic_size(admin.max_total_traffic)} ({traffic_percentage:.1f}%)\n"
-                    text += f"      ⏱️ زمان: {await format_time_duration(int(elapsed_seconds))}/{await format_time_duration(admin.max_total_time)} ({time_percentage:.1f}%)\n"
+                    text += f"      📊 ترافیک: {await format_traffic_size(admin_stats.total_traffic_used)}/{max_traffic_txt} ({traffic_percentage:.1f}%)\n"
+                    text += f"      ⏱️ زمان: {await format_time_duration(int(elapsed_seconds))}/{max_time_txt} ({time_percentage:.1f}%)\n"
                     
                     # Show warning if approaching limits
                     if any(p >= 80 for p in [user_percentage, traffic_percentage, time_percentage]):
@@ -2971,9 +3003,10 @@ async def manage_action_info(callback: CallbackQuery):
         if admin.marzban_username and admin.marzban_password:
             admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
             stats = await admin_api.get_admin_stats()
+            max_traffic_txt = "نامحدود" if (admin.max_total_traffic or 0) == 0 else await format_traffic_size(admin.max_total_traffic)
             text += (
                 f"👥 کاربران فعال/کل: {stats.active_users}/{stats.total_users}\n"
-                f"📊 ترافیک مصرفی: {await format_traffic_size(stats.total_traffic_used)} / {await format_traffic_size(admin.max_total_traffic)}\n"
+                f"📊 ترافیک مصرفی: {await format_traffic_size(stats.total_traffic_used)} / {max_traffic_txt}\n"
             )
         else:
             text += "اطلاعات مرزبان کامل نیست.\n"

@@ -152,17 +152,24 @@ async def show_admin_info(message_or_callback: Message | CallbackQuery, admin: A
         except Exception:
             users_breakdown = ""
 
+        # Handle display for unlimited values (traffic 0 => unlimited, time 0 => unlimited, users 0 => unlimited)
+        max_users_txt = "نامحدود" if (admin.max_users or 0) == 0 else f"{admin.max_users}"
+        max_traffic_txt = "نامحدود" if (admin.max_total_traffic or 0) == 0 else await format_traffic_size(admin.max_total_traffic)
+        max_time_seconds = admin.max_total_time or 0
+        # Treat very large durations (>=100 years) as unlimited for display
+        max_time_txt = "نامحدود" if max_time_seconds == 0 or max_time_seconds >= (36500 * 24 * 60 * 60) else await format_time_duration(max_time_seconds)
         text = (
             f"👤 **اطلاعات پنل: {panel_name}**\n\n"
             f"- **نام کاربری مرزبان:** `{admin.marzban_username}`\n"
             f"- **وضعیت:** {'✅ فعال' if admin.is_active else '❌ غیرفعال'}\n"
             f"- **تاریخ ایجاد:** {admin.created_at.strftime('%Y-%m-%d')}\n\n"
             f"📊 **محدودیت‌ها و استفاده:**\n"
-            f"- **کاربران:** {getattr(admin_stats, 'consumed_users', 0)}/{admin.max_users} ({user_percentage:.1f}%)\n"
+            f"- **کاربران:** {getattr(admin_stats, 'consumed_users', 0)}/{max_users_txt} ({user_percentage:.1f}%)\n"
             f"  ├ فعلی: {admin_stats.total_users} {users_breakdown}\n"
             f"  └ اوج تاریخی: {peak_users}\n"
-            f"- **ترافیک:** {await format_traffic_size(admin_stats.total_traffic_used)} / {await format_traffic_size(admin.max_total_traffic)} ({traffic_percentage:.1f}%)\n"
-            f"- **اعتبار زمانی:** {await format_time_duration(remaining_time_seconds)} مانده ({time_percentage:.1f}%)"
+            f"- **ترافیک:** {await format_traffic_size(admin_stats.total_traffic_used)} / {max_traffic_txt} ({traffic_percentage:.1f}%)\n"
+            f"- **اعتبار زمانی:** {await format_time_duration(remaining_time_seconds)} مانده ({time_percentage:.1f}%)\n"
+            f"  └ سقف: {max_time_txt}"
         )
 
     except Exception as e:
