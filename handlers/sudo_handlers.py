@@ -3624,7 +3624,7 @@ async def order_approve(callback: CallbackQuery):
     from models.schemas import AdminModel
     admin_model = AdminModel(
         user_id=o['user_id'],
-        admin_name=f"Reseller #{oid}",
+        admin_name=(plan.name or f"Reseller #{oid}"),
         marzban_username=new_username,
         marzban_password=new_password,
         max_users=(plan.max_users if plan.max_users is not None else 1000000),
@@ -3646,7 +3646,9 @@ async def order_approve(callback: CallbackQuery):
         login_url = await db.get_setting("global_login_url")
         if not login_url:
             login_url = issued_admin.login_url if issued_admin and issued_admin.login_url else config.MARZBAN_URL
+        plan_name_display = plan.name if plan and getattr(plan, 'name', None) else (o.get('plan_name_snapshot') or f"پلن #{o.get('plan_id')}")
         msg = config.MESSAGES["order_approved_user"].format(username=new_username, password=new_password, login_url=login_url)
+        msg += f"\n📦 پلن: {plan_name_display}"
         await bot.send_message(chat_id=o['user_id'], text=msg)
     except Exception as e:
         logger.error(f"Failed to notify user {o['user_id']} for order {oid}: {e}")
