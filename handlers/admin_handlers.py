@@ -434,11 +434,14 @@ async def admin_renew_panel(callback: CallbackQuery, state: FSMContext):
     await state.update_data(current_admin_id=admin_id)
     
     rates = await db.get_billing_rates()
-    # Determine renewability mode from origin plan
+    # Determine renewability mode: admin override takes precedence, else plan setting
     try:
-        from database import db
-        plan = await db.get_plan_by_id(getattr(admin, 'origin_plan_id', 0) or 0)
-        allow_incremental = bool(getattr(plan, 'allow_incremental_renewal', True)) if plan else True
+        override = getattr(admin, 'allow_incremental_renewal', None)
+        if override is not None:
+            allow_incremental = bool(override)
+        else:
+            plan = await db.get_plan_by_id(getattr(admin, 'origin_plan_id', 0) or 0)
+            allow_incremental = bool(getattr(plan, 'allow_incremental_renewal', True)) if plan else True
     except Exception:
         allow_incremental = True
 

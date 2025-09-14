@@ -33,6 +33,8 @@ class AddAdminStates(StatesGroup):
     waiting_for_traffic_volume = State()
     waiting_for_max_users = State()
     waiting_for_validity_period = State()
+    waiting_for_plan = State()
+    waiting_for_renew_mode = State()
     waiting_for_confirmation = State()
 
 
@@ -44,6 +46,8 @@ class ImportAdminStates(StatesGroup):
     waiting_for_traffic_volume = State()
     waiting_for_validity_period = State()
     waiting_for_max_users = State()
+    waiting_for_plan = State()
+    waiting_for_renew_mode = State()
     waiting_for_confirmation = State()
 
 
@@ -142,6 +146,137 @@ async def import_admin_entry(callback: CallbackQuery, state: FSMContext):
         "⬇️ افزودن ادمین قبلی\n\nیک نام نمایشی برای این پنل بفرستید (اختیاری، برای نمایش). اگر نمی‌خواهید، - بفرستید.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_panels")]])
     )
+    await callback.answer()
+@sudo_router.callback_query(F.data.startswith("add_pick_plan_"))
+async def add_pick_plan(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    pid = int(callback.data.split("_")[-1])
+    if pid != 0:
+        plan = await db.get_plan_by_id(pid)
+        if not plan:
+            await callback.answer("پلن یافت نشد.", show_alert=True)
+            return
+        await state.update_data(origin_plan_id=pid)
+        # default admin renewal policy follows plan unless changed in next step
+    else:
+        await state.update_data(origin_plan_id=None)
+    # Ask renew mode
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="مطابق پلن", callback_data="add_renew_mode_inherit")],
+        [InlineKeyboardButton(text="✅ تمدید تدریجی مجاز باشد", callback_data="add_renew_mode_inc")],
+        [InlineKeyboardButton(text="❌ فقط تمدید کامل", callback_data="add_renew_mode_full")]
+    ])
+    await callback.message.edit_text("سیاست تمدید این ادمین را انتخاب کنید:", reply_markup=kb)
+    await state.set_state(AddAdminStates.waiting_for_renew_mode)
+    await callback.answer()
+
+
+@sudo_router.callback_query(F.data.startswith("add_renew_mode_"))
+async def add_renew_mode(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    mode = callback.data.split("_")[-1]
+    if mode == "inherit":
+        await state.update_data(allow_incremental_renewal=None)
+    elif mode == "inc":
+        await state.update_data(allow_incremental_renewal=True)
+    else:
+        await state.update_data(allow_incremental_renewal=False)
+    data = await state.get_data()
+    admin_user_id = data.get("user_id")
+    admin_name = data.get("admin_name")
+    marzban_username = data.get("marzban_username")
+    traffic_gb = data.get("traffic_gb")
+    max_users = data.get("max_users")
+    validity_days = data.get("validity_days")
+    # Show final confirmation
+    confirmation_text = (
+        "📋 **خلاصه اطلاعات ادمین جدید**\n\n"
+        f"👤 **User ID:** `{admin_user_id}`\n"
+        f"📝 **نام ادمین:** {admin_name}\n"
+        f"🔐 **Username مرزبان:** {marzban_username}\n"
+        f"📊 **حجم ترافیک:** {'نامحدود' if data.get('traffic_unlimited') else str(traffic_gb) + ' گیگابایت'}\n"
+        f"👥 **تعداد کاربر مجاز:** {'نامحدود' if data.get('users_unlimited') else str(max_users) + ' کاربر'}\n"
+        f"📅 **مدت اعتبار:** {'نامحدود' if data.get('time_unlimited') else str(validity_days) + ' روز'}\n"
+        f"📦 **پلن:** {('بدون پلن' if not data.get('origin_plan_id') else '#' + str(data.get('origin_plan_id')))}\n"
+        f"🔁 **سیاست تمدید:** {('تدریجی مجاز' if (data.get('allow_incremental_renewal') is True) else ('فقط تمدید کامل' if (data.get('allow_incremental_renewal') is False) else 'مطابق پلن'))}\n\n"
+        "❓ **آیا اطلاعات صحیح است؟**\n\n"
+        "✅ برای **تایید و ایجاد ادمین** دکمه تایید را بزنید\n"
+        "❌ برای **لغو** دکمه لغو را بزنید"
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ تایید و ایجاد", callback_data="confirm_create_admin")],
+        [InlineKeyboardButton(text="❌ لغو", callback_data="back_to_main")]
+    ])
+    await callback.message.edit_text(confirmation_text, reply_markup=kb)
+    await state.set_state(AddAdminStates.waiting_for_confirmation)
+    await callback.answer()
+
+
+@sudo_router.callback_query(F.data.startswith("import_pick_plan_"))
+async def import_pick_plan(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    pid = int(callback.data.split("_")[-1])
+    if pid != 0:
+        plan = await db.get_plan_by_id(pid)
+        if not plan:
+            await callback.answer("پلن یافت نشد.", show_alert=True)
+            return
+        await state.update_data(origin_plan_id=pid)
+    else:
+        await state.update_data(origin_plan_id=None)
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="مطابق پلن", callback_data="import_renew_mode_inherit")],
+        [InlineKeyboardButton(text="✅ تمدید تدریجی مجاز باشد", callback_data="import_renew_mode_inc")],
+        [InlineKeyboardButton(text="❌ فقط تمدید کامل", callback_data="import_renew_mode_full")]
+    ])
+    await callback.message.edit_text("سیاست تمدید این ادمین را انتخاب کنید:", reply_markup=kb)
+    await state.set_state(ImportAdminStates.waiting_for_renew_mode)
+    await callback.answer()
+
+
+@sudo_router.callback_query(F.data.startswith("import_renew_mode_"))
+async def import_renew_mode(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    mode = callback.data.split("_")[-1]
+    if mode == "inherit":
+        await state.update_data(allow_incremental_renewal=None)
+    elif mode == "inc":
+        await state.update_data(allow_incremental_renewal=True)
+    else:
+        await state.update_data(allow_incremental_renewal=False)
+    # Show final confirmation for import
+    data = await state.get_data()
+    traffic_b = data.get('max_total_traffic')
+    validity_days = data.get('validity_days')
+    traffic_txt = "نامحدود" if data.get('traffic_unlimited') or (traffic_b == 0) else f"{traffic_b} بایت"
+    time_txt = "نامحدود" if data.get('time_unlimited') or (validity_days and validity_days >= 36500) else f"{validity_days} روز"
+    users_txt = "نامحدود" if data.get('users_unlimited') or ((data.get('max_users') or 0) >= 1000000) else f"{data.get('max_users')}"
+    text = (
+        "✅ تایید افزودن ادمین قبلی\n\n"
+        f"نام: {data.get('admin_name') or '-'}\n"
+        f"آیدی کاربر مقصد: {data.get('target_user_id','-')}\n"
+        f"نام کاربری مرزبان: {data.get('marzban_username')}\n"
+        f"کاربر: {users_txt}\n"
+        f"حجم: {traffic_txt}\n"
+        f"زمان: {time_txt}\n"
+        f"پلن: {('بدون پلن' if not data.get('origin_plan_id') else '#' + str(data.get('origin_plan_id')))}\n"
+        f"سیاست تمدید: {('تدریجی مجاز' if (data.get('allow_incremental_renewal') is True) else ('فقط تمدید کامل' if (data.get('allow_incremental_renewal') is False) else 'مطابق پلن'))}\n\n"
+        "برای ادامه تایید کنید."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ تایید و افزودن", callback_data="confirm_import_admin")],
+        [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_panels")]
+    ])
+    await callback.message.edit_text(text, reply_markup=kb)
+    await state.set_state(ImportAdminStates.waiting_for_confirmation)
     await callback.answer()
 
 @sudo_router.message(ImportAdminStates.waiting_for_admin_name, F.text)
@@ -246,22 +381,31 @@ async def import_admin_max_users(message: Message, state: FSMContext):
         traffic_txt = "نامحدود" if data.get('traffic_unlimited') or (traffic_b == 0) else f"{traffic_b} بایت"
         time_txt = "نامحدود" if data.get('time_unlimited') or (validity_days and validity_days >= 36500) else f"{validity_days} روز"
         users_txt = "نامحدود" if data.get('users_unlimited') or (max_users >= 1000000) else f"{max_users}"
-        text = (
-            "✅ تایید افزودن ادمین قبلی\n\n"
-            f"نام: {data.get('admin_name') or '-'}\n"
-            f"آیدی کاربر مقصد: {data.get('target_user_id','-')}\n"
-            f"نام کاربری مرزبان: {data.get('marzban_username')}\n"
-            f"کاربر: {users_txt}\n"
-            f"حجم: {traffic_txt}\n"
-            f"زمان: {time_txt}\n\n"
-            "برای ادامه تایید کنید."
-        )
-        kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ تایید و افزودن", callback_data="confirm_import_admin")],
-            [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_panels")]
-        ])
-        await state.set_state(ImportAdminStates.waiting_for_confirmation)
-        await message.answer(text, reply_markup=kb)
+        # Next: pick a plan
+        plans = await db.get_plans(only_active=True)
+        if not plans:
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⏭️ ادامه بدون پلن", callback_data="import_pick_plan_0")],
+                [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_panels")]
+            ])
+            await message.answer("هیچ پلنی موجود نیست. ادامه بدون پلن؟", reply_markup=kb)
+        else:
+            from utils.notify import seconds_to_days as _s2d
+            lines = ["📦 انتخاب پلن برای این ادمین:", ""]
+            for p in plans:
+                traffic_txt2 = "نامحدود" if p.traffic_limit_bytes is None else f"{await format_traffic_size(p.traffic_limit_bytes)}"
+                time_txt2 = "نامحدود" if p.time_limit_seconds is None else f"{_s2d(p.time_limit_seconds)} روز"
+                users_txt2 = "نامحدود" if p.max_users is None else f"{p.max_users} کاربر"
+                type_txt2 = "حجمی" if (getattr(p, 'plan_type', 'volume') == 'volume') else "پکیجی"
+                lines.append(f"#{p.id} • {p.name} ({type_txt2}) | {p.price:,} ت")
+                lines.append(f"  ترافیک: {traffic_txt2} | زمان: {time_txt2} | کاربر: {users_txt2}")
+                lines.append("—")
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=f"#{p.id} - {p.name}", callback_data=f"import_pick_plan_{p.id}")]
+                for p in plans
+            ] + [[InlineKeyboardButton(text="⏭️ ادامه بدون پلن", callback_data="import_pick_plan_0")]])
+            await message.answer("\n".join(lines).rstrip("—"), reply_markup=kb)
+        await state.set_state(ImportAdminStates.waiting_for_plan)
     except Exception:
         await message.answer("فرمت تعداد کاربران نامعتبر است. یک عدد صحیح وارد کنید:")
 
@@ -296,6 +440,8 @@ async def confirm_import_admin(callback: CallbackQuery, state: FSMContext):
         max_total_traffic=data.get('max_total_traffic', 107374182400),
         validity_days=data.get('validity_days', 30),
         is_active=True,
+        origin_plan_id=data.get('origin_plan_id'),
+        allow_incremental_renewal=data.get('allow_incremental_renewal')
     )
     ok = await db.add_admin(admin)
     if not ok:
@@ -938,7 +1084,7 @@ async def add_admin_callback(callback: CallbackQuery, state: FSMContext):
     
     await callback.message.edit_text(
         "🆕 **افزودن ادمین جدید**\n\n"
-        f"{get_progress_indicator(1)}\n"
+        f"{get_progress_indicator(1, total_steps=9)}\n"
         "📝 **مرحله ۱ از ۷: User ID**\n\n"
         "لطفاً User ID (آیدی تلگرام) کاربری که می‌خواهید ادمین کنید را ارسال کنید:\n\n"
         "🔍 **نکته:** User ID باید یک عدد صحیح باشد\n"
@@ -995,7 +1141,7 @@ async def process_admin_user_id(message: Message, state: FSMContext):
         # Move to next step
         await message.answer(
             f"✅ **User ID دریافت شد:** `{admin_user_id}`\n\n"
-            f"{get_progress_indicator(2)}\n"
+            f"{get_progress_indicator(2, total_steps=9)}\n"
             "📝 **مرحله ۲ از ۷: نام ادمین**\n\n"
             "لطفاً نام کامل ادمین را وارد کنید:\n\n"
             "📋 **مثال:** `احمد محمدی` یا `مدیر شعبه شمال`\n\n"
@@ -1139,7 +1285,7 @@ async def process_marzban_username(message: Message, state: FSMContext):
         # Move to next step
         await message.answer(
             f"✅ **Username مرزبان دریافت شد:** `{marzban_username}`\n\n"
-            "📝 **مرحله ۴ از ۷: Password مرزبان**\n\n"
+            "📝 **مرحله ۴ از ۹: Password مرزبان**\n\n"
             "لطفاً Password برای پنل مرزبان وارد کنید:\n\n"
             "🔐 **نکات امنیتی:**\n"
             "• حداقل ۸ کاراکتر\n"
@@ -1222,7 +1368,7 @@ async def process_marzban_password(message: Message, state: FSMContext):
         # Move to next step
         await message.answer(
             f"✅ **Password دریافت شد** (طول: {len(marzban_password)} کاراکتر)\n\n"
-            "📝 **مرحله ۵ از ۷: حجم ترافیک**\n\n"
+            "📝 **مرحله ۵ از ۹: حجم ترافیک**\n\n"
             "لطفاً حداکثر حجم ترافیک مجاز را به گیگابایت وارد کنید یا «نامحدود» بفرستید:\n\n"
             "📋 **مثال‌ها:**\n"
             "• `100` برای ۱۰۰ گیگابایت\n"
@@ -1297,7 +1443,7 @@ async def process_traffic_volume(message: Message, state: FSMContext):
         # Move to next step
         await message.answer(
             f"✅ **حجم ترافیک دریافت شد:** {'نامحدود' if data.get('traffic_unlimited') else str(traffic_gb) + ' گیگابایت'}\n\n"
-            "📝 **مرحله ۶ از ۷: تعداد کاربر مجاز**\n\n"
+            "📝 **مرحله ۶ از ۹: تعداد کاربر مجاز**\n\n"
             "لطفاً حداکثر تعداد کاربری که این ادمین می‌تواند ایجاد کند را وارد کنید یا «نامحدود» بفرستید:\n\n"
             "📋 **مثال‌ها:**\n"
             "• `10` برای ۱۰ کاربر\n"
@@ -1372,7 +1518,7 @@ async def process_max_users(message: Message, state: FSMContext):
         # Move to next step
         await message.answer(
             f"✅ **تعداد کاربر مجاز دریافت شد:** {max_users} کاربر\n\n"
-            "📝 **مرحله ۷ از ۷: مدت اعتبار**\n\n"
+            "📝 **مرحله ۷ از ۹: مدت اعتبار**\n\n"
             "لطفاً مدت اعتبار این ادمین را به روز وارد کنید یا «نامحدود» بفرستید:\n\n"
             "📋 **مثال‌ها:**\n"
             "• `30` برای ۳۰ روز (یک ماه)\n"
@@ -1447,40 +1593,36 @@ async def process_validity_period(message: Message, state: FSMContext):
         
         logger.info(f"User {user_id} entered validity period: {validity_days} days ({validity_seconds} seconds)")
         
-        # Get all collected data for confirmation
-        data = await state.get_data()
-        admin_user_id = data.get("user_id")
-        admin_name = data.get("admin_name")
-        marzban_username = data.get("marzban_username")
-        traffic_gb = data.get("traffic_gb")
-        max_users = data.get("max_users")
-        
-        # Show confirmation with summary
-        confirmation_text = (
-            "📋 **خلاصه اطلاعات ادمین جدید**\n\n"
-            f"👤 **User ID:** `{admin_user_id}`\n"
-            f"📝 **نام ادمین:** {admin_name}\n"
-            f"🔐 **Username مرزبان:** {marzban_username}\n"
-            f"📊 **حجم ترافیک:** {'نامحدود' if data.get('traffic_unlimited') else str(traffic_gb) + ' گیگابایت'}\n"
-            f"👥 **تعداد کاربر مجاز:** {'نامحدود' if data.get('users_unlimited') else str(max_users) + ' کاربر'}\n"
-            f"📅 **مدت اعتبار:** {'نامحدود' if data.get('time_unlimited') else str(validity_days) + ' روز'}\n\n"
-            "❓ **آیا اطلاعات صحیح است؟**\n\n"
-            "✅ برای **تایید و ایجاد ادمین** دکمه تایید را بزنید\n"
-            "❌ برای **لغو** دکمه لغو را بزنید"
-        )
-        
-        # Create confirmation keyboard
-        confirmation_keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [
-                InlineKeyboardButton(text="✅ تایید و ایجاد", callback_data="confirm_create_admin"),
-                InlineKeyboardButton(text="❌ لغو", callback_data="back_to_main")
-            ]
-        ])
-        
-        await message.answer(confirmation_text, reply_markup=confirmation_keyboard)
-        
-        # Change state to waiting for confirmation
-        await state.set_state(AddAdminStates.waiting_for_confirmation)
+        # Next: pick a plan
+        from utils.notify import seconds_to_days as _s2d
+        plans = await db.get_plans(only_active=True)
+        if not plans:
+            text = (
+                "🧾 هیچ پلن فعالی ثبت نشده است.\n\n"
+                "ابتدا از مسیر فروش/مالی ➜ افزودن پلن، یک پلن بسازید.\n\n"
+                "می‌توانید فعلاً بدون پلن ادامه دهید (تمدید کامل قیمت ثابتی نخواهد داشت)."
+            )
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="⏭️ ادامه بدون پلن", callback_data="add_pick_plan_0")],
+                [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
+            ])
+            await message.answer(text, reply_markup=kb)
+        else:
+            lines = ["📦 انتخاب پلن برای این ادمین:", ""]
+            for p in plans:
+                traffic_txt = "نامحدود" if p.traffic_limit_bytes is None else f"{await format_traffic_size(p.traffic_limit_bytes)}"
+                time_txt = "نامحدود" if p.time_limit_seconds is None else f"{_s2d(p.time_limit_seconds)} روز"
+                users_txt = "نامحدود" if p.max_users is None else f"{p.max_users} کاربر"
+                type_txt = "حجمی" if (getattr(p, 'plan_type', 'volume') == 'volume') else "پکیجی"
+                lines.append(f"#{p.id} • {p.name} ({type_txt}) | {p.price:,} ت")
+                lines.append(f"  ترافیک: {traffic_txt} | زمان: {time_txt} | کاربر: {users_txt}")
+                lines.append("—")
+            kb = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text=f"#{p.id} - {p.name}", callback_data=f"add_pick_plan_{p.id}")]
+                for p in plans
+            ] + [[InlineKeyboardButton(text="⏭️ ادامه بدون پلن", callback_data="add_pick_plan_0")]])
+            await message.answer("\n".join(lines).rstrip("—"), reply_markup=kb)
+        await state.set_state(AddAdminStates.waiting_for_plan)
         
         # Log state change
         current_state = await state.get_state()
@@ -1530,6 +1672,8 @@ async def confirm_create_admin(callback: CallbackQuery, state: FSMContext):
         max_users = data.get("max_users")
         validity_seconds = data.get("validity_seconds")
         validity_days = data.get("validity_days")
+        origin_plan_id = data.get("origin_plan_id")
+        allow_incremental_admin = data.get("allow_incremental_renewal")
         
         # Validate required data
         if admin_user_id is None or not marzban_username or not marzban_password:
@@ -1610,7 +1754,9 @@ async def confirm_create_admin(callback: CallbackQuery, state: FSMContext):
             max_users=max_users,
             max_total_time=validity_seconds,
             max_total_traffic=traffic_bytes,
-            validity_days=validity_days
+            validity_days=validity_days,
+            origin_plan_id=origin_plan_id,
+            allow_incremental_renewal=allow_incremental_admin
         )
         
         db_success = await db.add_admin(admin)
@@ -1656,7 +1802,9 @@ async def confirm_create_admin(callback: CallbackQuery, state: FSMContext):
             f"🔐 **Username مرزبان:** {marzban_username}\n"
             f"👥 **حداکثر کاربر:** {'نامحدود' if (max_users >= 1000000) else max_users}\n"
             f"📊 **حجم ترافیک:** {'نامحدود' if (traffic_bytes == 0) else await format_traffic_size(traffic_bytes)}\n"
-            f"📅 **مدت اعتبار:** {'نامحدود' if (validity_seconds == 0) else str(validity_days) + ' روز'}\n\n"
+            f"📅 **مدت اعتبار:** {'نامحدود' if (validity_seconds == 0) else str(validity_days) + ' روز'}\n"
+            f"📦 **پلن:** {('بدون پلن' if not origin_plan_id else '#' + str(origin_plan_id))}\n"
+            f"🔁 **سیاست تمدید:** {('تدریجی مجاز' if (allow_incremental_admin is True) else ('فقط تمدید کامل' if (allow_incremental_admin is False) else 'مطابق پلن'))}\n\n"
             "🎉 **مراحل انجام شده:**\n"
             "✅ ایجاد در پنل مرزبان\n"
             "✅ ذخیره در پایگاه داده\n"

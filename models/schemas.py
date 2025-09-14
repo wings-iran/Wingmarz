@@ -27,6 +27,8 @@ class AdminModel(BaseModel):
     origin_plan_id: Optional[int] = None
     traffic_cumulative_bytes: int = Field(default=0, ge=0)
     traffic_last_raw_bytes: int = Field(default=0, ge=0)
+    # If set, overrides plan's allow_incremental_renewal for this admin
+    allow_incremental_renewal: Optional[bool] = None
 
 
 class UsageReportModel(BaseModel):

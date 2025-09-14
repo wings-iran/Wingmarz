@@ -63,7 +63,8 @@ class Database:
                     users_historical_peak INTEGER DEFAULT 0,
                     origin_plan_id INTEGER,
                     traffic_cumulative_bytes INTEGER DEFAULT 0,
-                    traffic_last_raw_bytes INTEGER DEFAULT 0
+                    traffic_last_raw_bytes INTEGER DEFAULT 0,
+                    allow_incremental_renewal BOOLEAN
                 )
             """)
             
@@ -126,6 +127,12 @@ class Database:
                 pass
             try:
                 await db.execute("ALTER TABLE admins ADD COLUMN traffic_last_raw_bytes INTEGER DEFAULT 0")
+            except aiosqlite.OperationalError:
+                pass
+
+            # Add per-admin renewal policy override if missing
+            try:
+                await db.execute("ALTER TABLE admins ADD COLUMN allow_incremental_renewal BOOLEAN")
             except aiosqlite.OperationalError:
                 pass
 
@@ -336,14 +343,16 @@ class Database:
                                       login_url, username, first_name, last_name, 
                                       max_users, max_total_time, max_total_traffic, validity_days,
                                       is_active, original_password, deactivated_at, deactivated_reason,
-                                      users_historical_peak, origin_plan_id, traffic_cumulative_bytes, traffic_last_raw_bytes)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                      users_historical_peak, origin_plan_id, traffic_cumulative_bytes, traffic_last_raw_bytes,
+                                      allow_incremental_renewal)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """, (admin.user_id, admin.admin_name, admin.marzban_username, admin.marzban_password,
                       admin.login_url, admin.username, admin.first_name, admin.last_name,
                       admin.max_users, admin.max_total_time, admin.max_total_traffic, admin.validity_days,
                       admin.is_active, admin.original_password, admin.deactivated_at, admin.deactivated_reason,
                       getattr(admin, 'users_historical_peak', 0), getattr(admin, 'origin_plan_id', None),
-                      getattr(admin, 'traffic_cumulative_bytes', 0), getattr(admin, 'traffic_last_raw_bytes', 0)))
+                      getattr(admin, 'traffic_cumulative_bytes', 0), getattr(admin, 'traffic_last_raw_bytes', 0),
+                      (1 if getattr(admin, 'allow_incremental_renewal', None) is True else (0 if getattr(admin, 'allow_incremental_renewal', None) is False else None))))
                 await db.commit()
                 return True
         except aiosqlite.IntegrityError as e:
