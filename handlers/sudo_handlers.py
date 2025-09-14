@@ -2349,7 +2349,7 @@ async def admin_status_detail(callback: CallbackQuery):
             f"- **وضعیت:** {'✅ فعال' if admin.is_active else '❌ غیرفعال'}\n"
             f"- **تاریخ ایجاد:** {created_at.strftime('%Y-%m-%d')}\n\n"
             f"📊 **محدودیت‌ها و استفاده:**\n"
-            f"- **کاربران:** {getattr(admin_stats, 'consumed_users', 0)}/{max_users_txt} ({user_percentage:.1f}%)\n"
+            f"- **کاربران:** {getattr(admin_stats, 'active_users', 0)}/{max_users_txt} ({user_percentage:.1f}%)\n"
             f"  ├ فعلی: {admin_stats.total_users} {users_breakdown}\n"
             f"- **ترافیک:** {await format_traffic_size(admin_stats.total_traffic_used)} / {max_traffic_txt} ({traffic_percentage:.1f}%)\n"
             f"- **اعتبار زمانی:** {await format_time_duration(int(elapsed_seconds))} سپری‌شده ({time_percentage:.1f}%)\n"
