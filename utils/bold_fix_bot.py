@@ -100,7 +100,7 @@ class BoldFixBot(Bot):
             pass
         return await super().edit_message_media(media, chat_id, message_id, inline_message_id, *args, **kwargs)
 
-    async def __call__(self, method):
+    async def __call__(self, method, *args: Any, **kwargs: Any):
         """
         Intercept all API method calls to ensure Markdown-like bold/italic/code
         are converted to Telegram-safe HTML even when using Message.* helpers
@@ -120,5 +120,5 @@ class BoldFixBot(Bot):
                 setattr(method, "caption", convert_markdown_bold_to_html(caption))
         except Exception:
             pass
-        return await super().__call__(method)
+        return await super().__call__(method, *args, **kwargs)
 
