@@ -148,7 +148,9 @@ async def show_admin_info(message_or_callback: Message | CallbackQuery, admin: A
             quota_full_c = (admin_stats.counts_extra or {}).get("quota_full", 0)
             disabled_c = (admin_stats.counts_extra or {}).get("disabled", 0)
             active_c = (admin_stats.counts_by_status or {}).get("active", 0)
-            users_breakdown = f"(فعال: {active_c}, منقضی: {expired_c}, اتمام حجم: {quota_full_c}, غیرفعال: {disabled_c})"
+            # Use consumed_users as active for consistency with header count if it differs by one
+            # but keep detailed categories as-is, with 'اتمام حجم' wording per request
+            users_breakdown = f"(فعال: {getattr(admin_stats, 'consumed_users', active_c)}, منقضی: {expired_c}, اتمام حجم: {quota_full_c}, غیرفعال: {disabled_c})"
         except Exception:
             users_breakdown = ""
 
@@ -159,16 +161,16 @@ async def show_admin_info(message_or_callback: Message | CallbackQuery, admin: A
         # Treat very large durations (>=100 years) as unlimited for display
         max_time_txt = "نامحدود" if max_time_seconds == 0 or max_time_seconds >= (36500 * 24 * 60 * 60) else await format_time_duration(max_time_seconds)
         text = (
-            f"👤 **اطلاعات پنل: {panel_name}**\n\n"
-            f"- **نام کاربری مرزبان:** `{admin.marzban_username}`\n"
-            f"- **وضعیت:** {'✅ فعال' if admin.is_active else '❌ غیرفعال'}\n"
-            f"- **تاریخ ایجاد:** {admin.created_at.strftime('%Y-%m-%d')}\n\n"
-            f"📊 **محدودیت‌ها و استفاده:**\n"
-            f"- **کاربران:** {getattr(admin_stats, 'consumed_users', 0)}/{max_users_txt} ({user_percentage:.1f}%)\n"
+            f"👤 <b>اطلاعات پنل: {panel_name}</b>\n\n"
+            f"- <b>نام کاربری مرزبان:</b> <code>{admin.marzban_username}</code>\n"
+            f"- <b>وضعیت:</b> {'✅ فعال' if admin.is_active else '❌ غیرفعال'}\n"
+            f"- <b>تاریخ ایجاد:</b> {admin.created_at.strftime('%Y-%m-%d')}\n\n"
+            f"📊 <b>محدودیت‌ها و استفاده:</b>\n"
+            f"- <b>کاربران:</b> {getattr(admin_stats, 'consumed_users', 0)}/{max_users_txt} ({user_percentage:.1f}%)\n"
             f"  ├ فعلی: {admin_stats.total_users} {users_breakdown}\n"
             f"  └ اوج تاریخی: {peak_users}\n"
-            f"- **ترافیک:** {await format_traffic_size(admin_stats.total_traffic_used)} / {max_traffic_txt} ({traffic_percentage:.1f}%)\n"
-            f"- **اعتبار زمانی:** {await format_time_duration(remaining_time_seconds)} مانده ({time_percentage:.1f}%)\n"
+            f"- <b>ترافیک:</b> {await format_traffic_size(admin_stats.total_traffic_used)} / {max_traffic_txt} ({traffic_percentage:.1f}%)\n"
+            f"- <b>اعتبار زمانی:</b> {await format_time_duration(remaining_time_seconds)} مانده ({time_percentage:.1f}%)\n"
             f"  └ سقف: {max_time_txt}"
         )
 
