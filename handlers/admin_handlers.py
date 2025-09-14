@@ -148,7 +148,7 @@ async def show_admin_info(message_or_callback: Message | CallbackQuery, admin: A
             quota_full_c = (admin_stats.counts_extra or {}).get("quota_full", 0)
             disabled_c = (admin_stats.counts_extra or {}).get("disabled", 0)
             active_c = (admin_stats.counts_by_status or {}).get("active", 0)
-            users_breakdown = f"(فعال: {active_c}, منقضی: {expired_c}, پرحجم: {quota_full_c}, غیرفعال: {disabled_c})"
+            users_breakdown = f"(فعال: {active_c}, منقضی: {expired_c}, اتمام حجم: {quota_full_c}, غیرفعال: {disabled_c})"
         except Exception:
             users_breakdown = ""
 
