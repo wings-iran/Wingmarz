@@ -2343,16 +2343,21 @@ async def admin_status_detail(callback: CallbackQuery):
             users_breakdown = f"(فعال: {active_c}, منقضی: {expired_c}, اتمام حجم: {quota_full_c}, غیرفعال: {disabled_c})"
         except Exception:
             users_breakdown = ""
+        # Use HTML formatting and align users header with consumed_users to match breakdown
+        aligned_user_percentage = (
+            (getattr(admin_stats, 'consumed_users', 0) / admin.max_users * 100)
+            if (admin.max_users or 0) > 0 else 0
+        )
         detail_text = (
-            f"👤 **اطلاعات پنل: {panel_name}**\n\n"
-            f"- **نام کاربری مرزبان:** `{admin.marzban_username}`\n"
-            f"- **وضعیت:** {'✅ فعال' if admin.is_active else '❌ غیرفعال'}\n"
-            f"- **تاریخ ایجاد:** {created_at.strftime('%Y-%m-%d')}\n\n"
-            f"📊 **محدودیت‌ها و استفاده:**\n"
-            f"- **کاربران:** {getattr(admin_stats, 'active_users', 0)}/{max_users_txt} ({user_percentage:.1f}%)\n"
-            f"  ├ فعلی: {admin_stats.total_users} {users_breakdown}\n"
-            f"- **ترافیک:** {await format_traffic_size(admin_stats.total_traffic_used)} / {max_traffic_txt} ({traffic_percentage:.1f}%)\n"
-            f"- **اعتبار زمانی:** {await format_time_duration(int(elapsed_seconds))} سپری‌شده ({time_percentage:.1f}%)\n"
+            f"👤 <b>اطلاعات پنل: {panel_name}</b>\n\n"
+            f"- <b>نام کاربری مرزبان:</b> <code>{admin.marzban_username}</code>\n"
+            f"- <b>وضعیت:</b> {'✅ فعال' if admin.is_active else '❌ غیرفعال'}\n"
+            f"- <b>تاریخ ایجاد:</b> {created_at.strftime('%Y-%m-%d')}\n\n"
+            f"📊 <b>محدودیت‌ها و استفاده:</b>\n"
+            f"- <b>کاربران:</b> {getattr(admin_stats, 'consumed_users', 0)}/{max_users_txt} ({aligned_user_percentage:.1f}%)\n"
+            f"  ├ کل: {admin_stats.total_users} {users_breakdown}\n"
+            f"- <b>ترافیک:</b> {await format_traffic_size(admin_stats.total_traffic_used)} / {max_traffic_txt} ({traffic_percentage:.1f}%)\n"
+            f"- <b>اعتبار زمانی:</b> {await format_time_duration(int(elapsed_seconds))} سپری‌شده ({time_percentage:.1f}%)\n"
             f"  └ سقف: {max_time_txt}"
         )
     except Exception as e:

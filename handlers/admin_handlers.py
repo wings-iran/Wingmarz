@@ -167,7 +167,7 @@ async def show_admin_info(message_or_callback: Message | CallbackQuery, admin: A
             f"- <b>تاریخ ایجاد:</b> {admin.created_at.strftime('%Y-%m-%d')}\n\n"
             f"📊 <b>محدودیت‌ها و استفاده:</b>\n"
             f"- <b>کاربران:</b> {getattr(admin_stats, 'consumed_users', 0)}/{max_users_txt} ({user_percentage:.1f}%)\n"
-            f"  ├ فعلی: {admin_stats.total_users} {users_breakdown}\n"
+            f"  ├ کل: {admin_stats.total_users} {users_breakdown}\n"
             f"  └ اوج تاریخی: {peak_users}\n"
             f"- <b>ترافیک:</b> {await format_traffic_size(admin_stats.total_traffic_used)} / {max_traffic_txt} ({traffic_percentage:.1f}%)\n"
             f"- <b>اعتبار زمانی:</b> {await format_time_duration(remaining_time_seconds)} مانده ({time_percentage:.1f}%)\n"
