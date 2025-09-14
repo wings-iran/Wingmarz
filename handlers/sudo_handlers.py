@@ -2257,13 +2257,17 @@ async def show_admin_status_page(message_or_callback: Message | CallbackQuery, p
 
     rows = []
     for a in page_admins:
-        panel_name = a.admin_name or a.marzban_username or f"Panel {a.id}"
-        # Use last recorded traffic from usage_reports (per user_id)
+        panel_name = a.marzban_username or a.admin_name or f"Panel {a.id}"
+        # Use sudo-based admin usage cumulative for accurate traffic
         try:
-            report = await db.get_latest_usage_report(a.user_id)
-            used_bytes = int(getattr(report, 'current_total_traffic', 0) or 0) if report else 0
+            used_bytes = await marzban_api.get_admin_usage_cumulative(a.marzban_username or a.username or str(a.user_id))
         except Exception:
-            used_bytes = 0
+            # Fallback to last recorded usage report
+            try:
+                report = await db.get_latest_usage_report(a.user_id)
+                used_bytes = int(getattr(report, 'current_total_traffic', 0) or 0) if report else 0
+            except Exception:
+                used_bytes = 0
         used_txt = await format_traffic_size(used_bytes)
         btn_text = f"{panel_name} — {used_txt}"
         rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"admin_status_detail_{a.id}_p{page}")])
@@ -2315,7 +2319,7 @@ async def admin_status_detail(callback: CallbackQuery):
     if not admin:
         await callback.answer("پنل یافت نشد.", show_alert=True)
         return
-    panel_name = admin.admin_name or admin.marzban_username or f"Panel {admin.id}"
+    panel_name = admin.marzban_username or admin.admin_name or f"Panel {admin.id}"
     try:
         admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
         admin_stats = await admin_api.get_admin_stats()
