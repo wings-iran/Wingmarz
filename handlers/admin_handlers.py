@@ -188,8 +188,12 @@ async def show_admin_report(message_or_callback: Message | CallbackQuery, admin:
     try:
         admin_api = await marzban_api.create_admin_api(admin.marzban_username, admin.marzban_password)
         users = await admin_api.get_users()
-        
-        total_traffic = sum(u.used_traffic for u in users)
+        # Use sudo-based admin usage cumulative
+        try:
+            from marzban_api import marzban_api as _sudo_api
+            total_traffic = await _sudo_api.get_admin_usage_cumulative(admin.marzban_username or admin.username or "")
+        except Exception:
+            total_traffic = sum(u.used_traffic for u in users)
         active_users = len([u for u in users if u.status == 'active'])
         
         panel_name = admin.admin_name or admin.marzban_username

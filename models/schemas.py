@@ -25,6 +25,8 @@ class AdminModel(BaseModel):
     updated_at: Optional[datetime] = None
     users_historical_peak: int = Field(default=0, ge=0)
     origin_plan_id: Optional[int] = None
+    traffic_cumulative_bytes: int = Field(default=0, ge=0)
+    traffic_last_raw_bytes: int = Field(default=0, ge=0)
 
 
 class UsageReportModel(BaseModel):

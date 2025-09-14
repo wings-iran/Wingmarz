@@ -186,8 +186,13 @@ class MarzbanAdminAPI:
                 if status_key == "active" and not is_expired and not is_quota_full:
                     consumed_users += 1
             
-            # Calculate total current period traffic used (use used_traffic only to avoid double counting)
-            total_traffic_used = sum((u.used_traffic or 0) for u in admin_users)
+            # Calculate total traffic using sudo-based admin usage endpoint with monotonic aggregation
+            try:
+                # Use global API instance (sudo) to fetch admin usage and update monotonic cumulative
+                total_traffic_used = await marzban_api.get_admin_usage_cumulative(self.username)
+            except Exception:
+                # Fallback to summing users if usage endpoint unavailable
+                total_traffic_used = sum((u.used_traffic or 0) for u in admin_users)
             
             # Time usage is not aggregated from users; returned as 0 here
             total_time_used = 0
@@ -267,6 +272,83 @@ class MarzbanAPI:
             "Authorization": f"Bearer {self.token}",
             "Content-Type": "application/json"
         }
+
+    async def get_admin_usage_bytes(self, admin_username: str) -> Optional[int]:
+        """Get raw usage bytes for a specific admin using sudo credentials.
+
+        Tries to parse integer from JSON or plaintext responses.
+        """
+        try:
+            headers = await self.get_headers()
+            async with httpx.AsyncClient(timeout=config.API_TIMEOUT) as client:
+                response = await client.get(
+                    f"{self.base_url}/api/admin/usage/{admin_username}",
+                    headers=headers
+                )
+            if response.status_code != 200:
+                return None
+            # Try JSON first
+            try:
+                data = response.json()
+                # Accept common keys or first int value
+                if isinstance(data, dict):
+                    for key in ("usage", "total", "total_traffic", "bytes", "value"):
+                        val = data.get(key)
+                        if isinstance(val, int):
+                            return max(0, int(val))
+                    # Fallback: find first int-like
+                    for v in data.values():
+                        try:
+                            iv = int(v)
+                            return max(0, iv)
+                        except Exception:
+                            continue
+                elif isinstance(data, int):
+                    return max(0, data)
+            except Exception:
+                pass
+            # Try plain text numeric
+            text = (response.text or "").strip()
+            if text.isdigit():
+                return max(0, int(text))
+            return None
+        except Exception:
+            return None
+
+    async def get_admin_usage_cumulative(self, admin_username: str) -> int:
+        """Return monotonic cumulative usage for admin. Never decreases if raw usage drops.
+
+        Stores state in DB columns traffic_cumulative_bytes and traffic_last_raw_bytes.
+        """
+        try:
+            raw = await self.get_admin_usage_bytes(admin_username)
+            # Load admin row to maintain counters
+            try:
+                from database import db
+                admin = await db.get_admin_by_marzban_username(admin_username)
+            except Exception:
+                admin = None
+            if not admin:
+                # No DB row; return raw if available else 0
+                return int(raw or 0)
+            old_cum = int(getattr(admin, "traffic_cumulative_bytes", 0) or 0)
+            old_last = int(getattr(admin, "traffic_last_raw_bytes", 0) or 0)
+            if raw is None:
+                return old_cum
+            new_raw = int(max(0, raw))
+            if new_raw >= old_last:
+                delta = new_raw - old_last
+                new_cum = old_cum + delta
+                try:
+                    await db.update_admin(admin.id, traffic_cumulative_bytes=new_cum, traffic_last_raw_bytes=new_raw)
+                except Exception:
+                    pass
+                return new_cum
+            else:
+                # Raw decreased (e.g., user deletions or reset); do not decrease cumulative, keep last baseline
+                return old_cum
+        except Exception:
+            return 0
 
     async def _request(self, method: str, url: str, *, params: Optional[Dict[str, Any]] = None, json: Optional[Dict[str, Any]] = None, retry: bool = True) -> httpx.Response:
         """Perform an HTTP request with automatic token refresh on 401."""
@@ -590,8 +672,12 @@ class MarzbanAPI:
                 if status_key == "active" and not is_expired and not is_quota_full:
                     consumed_users += 1
             
-            # Calculate total current period traffic used (use used_traffic only to avoid double counting)
-            total_traffic_used = sum((u.used_traffic or 0) for u in admin_users)
+            # Calculate total traffic using sudo-based admin usage endpoint with monotonic aggregation
+            try:
+                total_traffic_used = await self.get_admin_usage_cumulative(admin_username)
+            except Exception:
+                # Fallback to summing users
+                total_traffic_used = sum((u.used_traffic or 0) for u in admin_users)
             
             # Time usage is not aggregated from users; returned as 0 here
             total_time_used = 0
