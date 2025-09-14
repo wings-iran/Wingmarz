@@ -50,6 +50,7 @@ class ImportAdminStates(StatesGroup):
 class EditPanelStates(StatesGroup):
     waiting_for_traffic_volume = State()
     waiting_for_validity_period = State()
+    waiting_for_max_users = State()
     waiting_for_confirmation = State()
 
 class ManageAdminStates(StatesGroup):
@@ -1222,11 +1223,11 @@ async def process_marzban_password(message: Message, state: FSMContext):
         await message.answer(
             f"✅ **Password دریافت شد** (طول: {len(marzban_password)} کاراکتر)\n\n"
             "📝 **مرحله ۵ از ۷: حجم ترافیک**\n\n"
-            "لطفاً حداکثر حجم ترافیک مجاز را به گیگابایت وارد کنید:\n\n"
+            "لطفاً حداکثر حجم ترافیک مجاز را به گیگابایت وارد کنید یا «نامحدود» بفرستید:\n\n"
             "📋 **مثال‌ها:**\n"
             "• `100` برای ۱۰۰ گیگابایت\n"
             "• `50.5` برای ۵۰.۵ گیگابایت\n"
-            "• `1000` برای ۱ ترابایت\n\n"
+            "• `نامحدود` برای بدون محدودیت\n\n"
             "💡 **نکته:** عدد اعشاری هم قابل قبول است"
         )
         
@@ -1261,42 +1262,48 @@ async def process_traffic_volume(message: Message, state: FSMContext):
         return
     
     try:
-        traffic_gb = float(message.text.strip())
-        
-        # Validate traffic volume
-        if traffic_gb <= 0:
-            await message.answer(
-                "❌ **حجم ترافیک نامعتبر!**\n\n"
-                "حجم ترافیک باید عددی مثبت باشد.\n\n"
-                "💡 لطفاً عدد صحیحی وارد کنید:"
-            )
-            return
-        
-        if traffic_gb > 10000:  # More than 10TB seems unrealistic
-            await message.answer(
-                "⚠️ **حجم ترافیک خیلی زیاد است!**\n\n"
-                f"آیا واقعاً می‌خواهید {traffic_gb} گیگابایت تخصیص دهید؟\n\n"
-                "🤔 برای تایید همین مقدار را مجدد ارسال کنید، یا مقدار کمتری وارد کنید."
-            )
-            return
-        
-        # Convert GB to bytes
-        traffic_bytes = gb_to_bytes(traffic_gb)
-        
-        # Save traffic to state data
-        await state.update_data(traffic_gb=traffic_gb, traffic_bytes=traffic_bytes)
+        raw = message.text.strip()
+        lower = raw.lower()
+        if lower in ["نامحدود", "بدون محدودیت", "unlimited", "∞", "بي نهايت", "بی نهایت", "بی‌نهایت"]:
+            await state.update_data(traffic_gb=None, traffic_bytes=0, traffic_unlimited=True)
+        else:
+            traffic_gb = float(raw.replace(',', '.'))
+            
+            # Validate traffic volume
+            if traffic_gb <= 0:
+                await message.answer(
+                    "❌ **حجم ترافیک نامعتبر!**\n\n"
+                    "حجم ترافیک باید عددی مثبت باشد.\n\n"
+                    "💡 لطفاً عدد صحیحی وارد کنید:"
+                )
+                return
+            
+            if traffic_gb > 10000:  # More than 10TB seems unrealistic
+                await message.answer(
+                    "⚠️ **حجم ترافیک خیلی زیاد است!**\n\n"
+                    f"آیا واقعاً می‌خواهید {traffic_gb} گیگابایت تخصیص دهید؟\n\n"
+                    "🤔 برای تایید همین مقدار را مجدد ارسال کنید، یا مقدار کمتری وارد کنید."
+                )
+                return
+            
+            # Convert GB to bytes
+            traffic_bytes = gb_to_bytes(traffic_gb)
+            
+            # Save traffic to state data
+            await state.update_data(traffic_gb=traffic_gb, traffic_bytes=traffic_bytes)
         
         logger.info(f"User {user_id} entered traffic volume: {traffic_gb} GB ({traffic_bytes} bytes)")
         
         # Move to next step
         await message.answer(
-            f"✅ **حجم ترافیک دریافت شد:** {traffic_gb} گیگابایت\n\n"
+            f"✅ **حجم ترافیک دریافت شد:** {'نامحدود' if data.get('traffic_unlimited') else str(traffic_gb) + ' گیگابایت'}\n\n"
             "📝 **مرحله ۶ از ۷: تعداد کاربر مجاز**\n\n"
-            "لطفاً حداکثر تعداد کاربری که این ادمین می‌تواند ایجاد کند را وارد کنید:\n\n"
+            "لطفاً حداکثر تعداد کاربری که این ادمین می‌تواند ایجاد کند را وارد کنید یا «نامحدود» بفرستید:\n\n"
             "📋 **مثال‌ها:**\n"
             "• `10` برای ۱۰ کاربر\n"
             "• `50` برای ۵۰ کاربر\n"
-            "• `100` برای ۱۰۰ کاربر\n\n"
+            "• `100` برای ۱۰۰ کاربر\n"
+            "• `نامحدود` برای بدون محدودیت\n\n"
             "💡 **نکته:** عدد صحیح وارد کنید"
         )
         
@@ -1366,11 +1373,12 @@ async def process_max_users(message: Message, state: FSMContext):
         await message.answer(
             f"✅ **تعداد کاربر مجاز دریافت شد:** {max_users} کاربر\n\n"
             "📝 **مرحله ۷ از ۷: مدت اعتبار**\n\n"
-            "لطفاً مدت اعتبار این ادمین را به روز وارد کنید:\n\n"
+            "لطفاً مدت اعتبار این ادمین را به روز وارد کنید یا «نامحدود» بفرستید:\n\n"
             "📋 **مثال‌ها:**\n"
             "• `30` برای ۳۰ روز (یک ماه)\n"
             "• `90` برای ۹۰ روز (سه ماه)\n"
-            "• `365` برای ۳۶۵ روز (یک سال)\n\n"
+            "• `365` برای ۳۶۵ روز (یک سال)\n"
+            "• `نامحدود` برای بدون محدودیت\n\n"
             "💡 **نکته:** پس از انقضا، ادمین غیرفعال می‌شود"
         )
         
@@ -1453,9 +1461,9 @@ async def process_validity_period(message: Message, state: FSMContext):
             f"👤 **User ID:** `{admin_user_id}`\n"
             f"📝 **نام ادمین:** {admin_name}\n"
             f"🔐 **Username مرزبان:** {marzban_username}\n"
-            f"📊 **حجم ترافیک:** {traffic_gb} گیگابایت\n"
-            f"👥 **تعداد کاربر مجاز:** {max_users} کاربر\n"
-            f"📅 **مدت اعتبار:** {validity_days} روز\n\n"
+            f"📊 **حجم ترافیک:** {'نامحدود' if data.get('traffic_unlimited') else str(traffic_gb) + ' گیگابایت'}\n"
+            f"👥 **تعداد کاربر مجاز:** {'نامحدود' if data.get('users_unlimited') else str(max_users) + ' کاربر'}\n"
+            f"📅 **مدت اعتبار:** {'نامحدود' if data.get('time_unlimited') else str(validity_days) + ' روز'}\n\n"
             "❓ **آیا اطلاعات صحیح است؟**\n\n"
             "✅ برای **تایید و ایجاد ادمین** دکمه تایید را بزنید\n"
             "❌ برای **لغو** دکمه لغو را بزنید"
@@ -1524,7 +1532,33 @@ async def confirm_create_admin(callback: CallbackQuery, state: FSMContext):
         validity_days = data.get("validity_days")
         
         # Validate required data
-        if not all([admin_user_id, admin_name, marzban_username, marzban_password, traffic_bytes, max_users, validity_seconds]):
+        if admin_user_id is None or not marzban_username or not marzban_password:
+            logger.error(f"Missing critical identifiers in state for user {user_id}")
+            await callback.message.edit_text(
+                "❌ **خطا: اطلاعات ناقص**\n\n"
+                "اطلاعات جلسه ناقص است. لطفاً مجدداً شروع کنید.",
+                reply_markup=get_sudo_keyboard()
+            )
+            await state.clear()
+            await callback.answer()
+            return
+        # Map unlimited sentinels for traffic/time/users
+        if traffic_bytes is None and data.get('traffic_unlimited'):
+            traffic_bytes = 0
+        if validity_seconds is None and data.get('time_unlimited'):
+            validity_seconds = 0
+        if max_users is None and data.get('users_unlimited'):
+            max_users = 1000000
+        if traffic_bytes is None or max_users is None or validity_seconds is None:
+            logger.error(f"Missing limit values in state for user {user_id}")
+            await callback.message.edit_text(
+                "❌ **خطا: اطلاعات محدودیت‌ها ناقص است**\n\n"
+                "لطفاً مجدداً شروع کنید.",
+                reply_markup=get_sudo_keyboard()
+            )
+            await state.clear()
+            await callback.answer()
+            return
             logger.error(f"Missing required data in state for user {user_id}")
             await callback.message.edit_text(
                 "❌ **خطا: اطلاعات ناقص**\n\n"
@@ -1620,9 +1654,9 @@ async def confirm_create_admin(callback: CallbackQuery, state: FSMContext):
             f"👤 **User ID:** {admin_user_id}\n"
             f"📝 **نام ادمین:** {admin_name}\n"
             f"🔐 **Username مرزبان:** {marzban_username}\n"
-            f"👥 **حداکثر کاربر:** {max_users}\n"
-            f"📊 **حجم ترافیک:** {await format_traffic_size(traffic_bytes)}\n"
-            f"📅 **مدت اعتبار:** {validity_days} روز\n\n"
+            f"👥 **حداکثر کاربر:** {'نامحدود' if (max_users >= 1000000) else max_users}\n"
+            f"📊 **حجم ترافیک:** {'نامحدود' if (traffic_bytes == 0) else await format_traffic_size(traffic_bytes)}\n"
+            f"📅 **مدت اعتبار:** {'نامحدود' if (validity_seconds == 0) else str(validity_days) + ' روز'}\n\n"
             "🎉 **مراحل انجام شده:**\n"
             "✅ ایجاد در پنل مرزبان\n"
             "✅ ذخیره در پایگاه داده\n"
@@ -1843,9 +1877,8 @@ async def start_edit_panel(callback: CallbackQuery, state: FSMContext):
         f"📡 ترافیک: {current_traffic} گیگابایت\n"
         f"⏰ مدت زمان: {current_time} روز\n\n"
         f"📝 **مرحله ۱ از ۳: ترافیک جدید**\n\n"
-        "لطفاً مقدار ترافیک جدید را به گیگابایت وارد کنید:\n\n"
-        "📋 **مثال:** `500` برای ۵۰۰ گیگابایت\n"
-        "💡 **نکته:** عدد صحیح وارد کنید",
+        "لطفاً مقدار ترافیک جدید را به گیگابایت وارد کنید یا «نامحدود» بفرستید:\n\n"
+        "📋 **مثال:** `500` برای ۵۰۰ گیگابایت یا `نامحدود`",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text=config.BUTTONS["cancel"], callback_data="back_to_main")]
         ])
@@ -1870,24 +1903,29 @@ async def process_edit_traffic(message: Message, state: FSMContext):
         return
     
     try:
-        traffic_gb = int(message.text.strip())
-        
-        if traffic_gb <= 0:
-            await message.answer(
-                "❌ **مقدار ترافیک نامعتبر!**\n\n"
-                "لطفاً عددی بزرگتر از صفر وارد کنید:"
-            )
-            return
-        
-        if traffic_gb > 10000:  # Reasonable upper limit
-            await message.answer(
-                "❌ **مقدار ترافیک خیلی زیاد!**\n\n"
-                "لطفاً مقداری کمتر از ۱۰۰۰۰ گیگابایت وارد کنید:"
-            )
-            return
-        
-        # Save traffic to state
-        await state.update_data(traffic_gb=traffic_gb)
+        raw = message.text.strip()
+        lower = raw.lower()
+        if lower in ["نامحدود", "بدون محدودیت", "unlimited", "∞", "بي نهايت", "بی نهایت", "بی‌نهایت"]:
+            await state.update_data(traffic_gb=None, traffic_unlimited=True)
+        else:
+            traffic_gb = int(raw)
+            
+            if traffic_gb <= 0:
+                await message.answer(
+                    "❌ **مقدار ترافیک نامعتبر!**\n\n"
+                    "لطفاً عددی بزرگتر از صفر وارد کنید:"
+                )
+                return
+            
+            if traffic_gb > 10000:  # Reasonable upper limit
+                await message.answer(
+                    "❌ **مقدار ترافیک خیلی زیاد!**\n\n"
+                    "لطفاً مقداری کمتر از ۱۰۰۰۰ گیگابایت وارد کنید:"
+                )
+                return
+            
+            # Save traffic to state
+            await state.update_data(traffic_gb=traffic_gb)
         
         # Get admin info for display
         data = await state.get_data()
@@ -1898,11 +1936,11 @@ async def process_edit_traffic(message: Message, state: FSMContext):
         current_time = seconds_to_days(admin.max_total_time)
         
         await message.answer(
-            f"✅ **ترافیک جدید:** {traffic_gb} گیگابایت\n\n"
+            f"✅ **ترافیک جدید:** {'نامحدود' if (data and data.get('traffic_unlimited')) else str(traffic_gb) + ' گیگابایت'}\n\n"
             f"📝 **مرحله ۲ از ۳: مدت زمان جدید**\n\n"
             f"⏰ **مدت زمان فعلی:** {current_time} روز\n\n"
-            "لطفاً مدت زمان جدید را به روز وارد کنید:\n\n"
-            "📋 **مثال:** `30` برای ۳۰ روز\n"
+            "لطفاً مدت زمان جدید را به روز وارد کنید یا «نامحدود» بفرستید:\n\n"
+            "📋 **مثال:** `30` برای ۳۰ روز یا `نامحدود`\n"
             "💡 **نکته:** عدد صحیح وارد کنید"
         )
         
@@ -1938,9 +1976,15 @@ async def process_edit_time(message: Message, state: FSMContext):
         return
     
     try:
-        validity_days = int(message.text.strip())
+        raw = message.text.strip()
+        lower = raw.lower()
+        if lower in ["نامحدود", "بدون محدودیت", "unlimited", "∞", "بي نهايت", "بی نهایت", "بی‌نهایت"]:
+            validity_days = 0
+            await state.update_data(validity_unlimited=True)
+        else:
+            validity_days = int(raw)
         
-        if validity_days <= 0:
+        if validity_days < 0:
             await message.answer(
                 "❌ **مدت زمان نامعتبر!**\n\n"
                 "لطفاً عددی بزرگتر از صفر وارد کنید:"
@@ -1969,17 +2013,14 @@ async def process_edit_time(message: Message, state: FSMContext):
         
         panel_name = admin.admin_name or admin.marzban_username or f"Panel-{admin.id}"
         
-        # Show confirmation
-        confirmation_text = (
-            f"📋 **تأیید نهایی ویرایش پنل**\n\n"
-            f"🏷️ **پنل:** {panel_name}\n"
-            f"👤 **کاربر:** {admin.username or admin.user_id}\n"
-            f"🔐 **نام کاربری مرزبان:** {admin.marzban_username}\n\n"
-            f"📊 **تغییرات:**\n"
-            f"📡 ترافیک: {old_traffic} GB ← {traffic_gb} GB\n"
-            f"⏰ مدت زمان: {old_time} روز ← {validity_days} روز\n\n"
-            "❓ آیا از انجام این تغییرات اطمینان دارید؟"
+        # After time, ask for max users (with unlimited)
+        await message.answer(
+            "👥 **مرحله ۳ از ۳: حداکثر کاربر**\n\n"
+            "لطفاً حداکثر تعداد کاربر را وارد کنید یا «نامحدود» بفرستید:\n\n"
+            "📋 **مثال‌ها:** `100` یا `نامحدود`"
         )
+        await state.set_state(EditPanelStates.waiting_for_max_users)
+        return
         
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [
@@ -2006,6 +2047,54 @@ async def process_edit_time(message: Message, state: FSMContext):
         await state.clear()
 
 
+@sudo_router.message(EditPanelStates.waiting_for_max_users, F.text)
+async def process_edit_max_users(message: Message, state: FSMContext):
+    """Process new max users for editing (supports 'نامحدود')."""
+    user_id = message.from_user.id
+    if user_id not in config.SUDO_ADMINS:
+        await message.answer("⛔ شما مجاز به انجام این عمل نیستید.")
+        await state.clear()
+        return
+    try:
+        raw = message.text.strip()
+        lower = raw.lower()
+        if lower in ["نامحدود", "بدون محدودیت", "unlimited", "∞", "بي نهايت", "بی نهایت", "بی‌نهایت"]:
+            await state.update_data(max_users_new=None, users_unlimited=True)
+        else:
+            max_users_new = int(raw)
+            if max_users_new <= 0:
+                raise ValueError()
+            await state.update_data(max_users_new=max_users_new)
+        data = await state.get_data()
+        admin = await db.get_admin_by_id(data.get('admin_id'))
+        from utils.notify import bytes_to_gb, seconds_to_days
+        old_traffic = bytes_to_gb(admin.max_total_traffic)
+        old_time = seconds_to_days(admin.max_total_time)
+        traffic_gb = data.get('traffic_gb')
+        validity_days = data.get('validity_days')
+        max_users_new = data.get('max_users_new')
+        panel_name = admin.admin_name or admin.marzban_username or f"Panel-{admin.id}"
+        confirmation_text = (
+            f"📋 **تأیید نهایی ویرایش پنل**\n\n"
+            f"🏷️ **پنل:** {panel_name}\n"
+            f"👤 **کاربر:** {admin.username or admin.user_id}\n"
+            f"🔐 **نام کاربری مرزبان:** {admin.marzban_username}\n\n"
+            f"📊 **تغییرات:**\n"
+            f"📡 ترافیک: {old_traffic} GB ← {'نامحدود' if (data and data.get('traffic_unlimited')) else str(traffic_gb) + ' GB'}\n"
+            f"⏰ مدت زمان: {old_time} روز ← {'نامحدود' if (data and data.get('validity_unlimited')) else str(validity_days) + ' روز'}\n"
+            f"👥 کاربر: {admin.max_users} ← {'نامحدود' if data.get('users_unlimited') else str(data.get('max_users_new'))}" + ("" if data.get('users_unlimited') else " کاربر") + "\n\n"
+            "❓ آیا از انجام این تغییرات اطمینان دارید؟"
+        )
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ تأیید", callback_data="confirm_edit_panel")],
+            [InlineKeyboardButton(text="❌ لغو", callback_data="back_to_main")]
+        ])
+        await message.answer(confirmation_text, reply_markup=keyboard)
+        await state.set_state(EditPanelStates.waiting_for_confirmation)
+    except Exception:
+        await message.answer("❌ ورودی نامعتبر است. یک عدد صحیح یا «نامحدود» بفرستید:")
+
+
 @sudo_router.callback_query(F.data == "confirm_edit_panel")
 async def confirm_edit_panel(callback: CallbackQuery, state: FSMContext):
     """Confirm panel editing."""
@@ -2021,21 +2110,29 @@ async def confirm_edit_panel(callback: CallbackQuery, state: FSMContext):
         traffic_gb = data.get('traffic_gb')
         validity_days = data.get('validity_days')
         
-        if not all([admin_id, traffic_gb, validity_days]):
+        if admin_id is None or (traffic_gb is None and not data.get('traffic_unlimited')) or (validity_days is None and not data.get('validity_unlimited')):
             await callback.answer("داده‌های ناکافی", show_alert=True)
             await state.clear()
             return
         
         # Convert to database format
         from utils.notify import gb_to_bytes, days_to_seconds
-        max_total_traffic = gb_to_bytes(traffic_gb)
-        max_total_time = days_to_seconds(validity_days)
+        max_total_traffic = 0 if data.get('traffic_unlimited') else gb_to_bytes(traffic_gb)
+        # Map unlimited to 0 seconds as sentinel
+        max_total_time = 0 if data.get('validity_unlimited') else days_to_seconds(validity_days)
         
+        # Determine users cap (use 1,000,000 sentinel for unlimited)
+        if data.get('users_unlimited'):
+            new_max_users = 1000000
+        else:
+            new_max_users = max_users_new if (max_users_new is not None) else None
+
         # Update in database
         success = await db.update_admin(
             admin_id, 
             max_total_traffic=max_total_traffic,
-            max_total_time=max_total_time
+            max_total_time=max_total_time,
+            **({"max_users": new_max_users} if new_max_users is not None else {})
         )
         
         if success:
@@ -2045,8 +2142,9 @@ async def confirm_edit_panel(callback: CallbackQuery, state: FSMContext):
             await callback.message.edit_text(
                 f"✅ پنل {panel_name} با موفقیت ویرایش شد!\n\n"
                 f"📊 **محدودیت‌های جدید:**\n"
-                f"📡 ترافیک: {traffic_gb} گیگابایت\n"
-                f"⏰ مدت زمان: {validity_days} روز\n\n"
+                f"📡 ترافیک: {'نامحدود' if max_total_traffic == 0 else str(traffic_gb) + ' گیگابایت'}\n"
+                f"⏰ مدت زمان: {'نامحدود' if max_total_time == 0 else str(validity_days) + ' روز'}\n"
+                f"👥 کاربر: {'نامحدود' if (new_max_users is not None and new_max_users >= 1000000) else (str(new_max_users) + ' کاربر' if new_max_users is not None else 'بدون تغییر')}\n\n"
                 f"👤 کاربر: {admin.username or admin.user_id}\n"
                 f"🔐 نام کاربری مرزبان: {admin.marzban_username}",
                 reply_markup=get_sudo_keyboard()

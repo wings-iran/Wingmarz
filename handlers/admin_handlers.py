@@ -155,7 +155,7 @@ async def show_admin_info(message_or_callback: Message | CallbackQuery, admin: A
             users_breakdown = ""
 
         # Handle display for unlimited values (traffic 0 => unlimited, time 0 => unlimited, users 0 => unlimited)
-        max_users_txt = "نامحدود" if (admin.max_users or 0) == 0 else f"{admin.max_users}"
+        max_users_txt = "نامحدود" if ((admin.max_users or 0) == 0 or (admin.max_users or 0) >= 1000000) else f"{admin.max_users}"
         max_traffic_txt = "نامحدود" if (admin.max_total_traffic or 0) == 0 else await format_traffic_size(admin.max_total_traffic)
         max_time_seconds = admin.max_total_time or 0
         # Treat very large durations (>=100 years) as unlimited for display
