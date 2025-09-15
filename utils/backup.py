@@ -7,19 +7,47 @@ import zipfile
 import config
 
 
+def _path_norm(p: Path) -> Path:
+    try:
+        return p.resolve()
+    except Exception:
+        return p
+
+
+def _is_excluded(file_path: Path, exclude_paths: set[Path]) -> bool:
+    fp = _path_norm(file_path)
+    for ex in (exclude_paths or set()):
+        exn = _path_norm(ex)
+        try:
+            # Exclude if exact match or inside an excluded directory
+            if fp == exn or exn in fp.parents:
+                return True
+        except Exception:
+            # Best-effort; ignore path resolution errors
+            pass
+    # Additionally exclude any prior backup zip files by name to prevent recursive growth
+    name_lower = fp.name.lower()
+    if name_lower.startswith("backup-") and name_lower.endswith(".zip"):
+        return True
+    return False
+
+
 def _add_path_to_zip(zip_file: zipfile.ZipFile, source_path: Path, base_dir: Path, exclude_paths: set[Path] | None = None) -> None:
     exclude_paths = exclude_paths or set()
     if source_path.is_file():
-        if source_path in exclude_paths:
+        if _is_excluded(source_path, exclude_paths):
             return
         arcname = source_path.relative_to(base_dir) if source_path.is_absolute() and base_dir in source_path.parents else source_path.name
         zip_file.write(source_path, arcname=str(arcname))
         return
     for root, _, files in os.walk(source_path):
         root_path = Path(root)
+        # Skip entire directory trees that are excluded
+        if _is_excluded(root_path, exclude_paths):
+            continue
         for f in files:
             file_path = root_path / f
-            if file_path in exclude_paths:
+            if _is_excluded(file_path, exclude_paths):
                 continue
             try:
                 arcname = file_path.relative_to(base_dir) if base_dir in file_path.parents else file_path.name
@@ -42,8 +70,13 @@ async def create_backup_zip() -> Path:
 
     timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     backup_name = f"backup-{timestamp}.zip"
-    # Prefer storing backup next to DB (often a persistent volume)
-    output_dir = base_dir if base_dir.exists() else Path.cwd()
+    # Determine backup output directory
+    # Prefer configured BACKUP_DIR; otherwise use a dedicated 'backups' folder next to the DB (often a persistent volume)
+    configured_backup_dir = (getattr(config, "BACKUP_DIR", "") or "").strip()
+    if configured_backup_dir:
+        output_dir = Path(configured_backup_dir).expanduser().resolve()
+    else:
+        output_dir = (base_dir / "backups").resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
     backup_zip_path = output_dir / backup_name
 
@@ -58,7 +91,15 @@ async def create_backup_zip() -> Path:
             # e.g., '/app/data'; skip if base_dir is project root with many files
             try:
                 if base_dir.name.lower() in ("data", "storage"):
-                    _add_path_to_zip(zf, base_dir, base_dir, exclude_paths={backup_zip_path})
+                    # Exclude the backups output directory and any prior backup zips to avoid recursive growth
+                    exclude: set[Path] = {backup_zip_path}
+                    try:
+                        # Only add output_dir to exclusions if it's inside base_dir
+                        if _path_norm(base_dir) in _path_norm(output_dir).parents or _path_norm(base_dir) == _path_norm(output_dir):
+                            exclude.add(output_dir)
+                    except Exception:
+                        pass
+                    _add_path_to_zip(zf, base_dir, base_dir, exclude_paths=exclude)
             except Exception:
                 pass
 

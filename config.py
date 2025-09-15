@@ -1,6 +1,10 @@
 import os
 from typing import List
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except Exception:  # make optional for environments without python-dotenv
+    def load_dotenv(*args, **kwargs):
+        return False
 
 # Load .env file automatically at import time
 load_dotenv()
@@ -20,6 +24,7 @@ SUDO_ADMINS: List[int] = [
 
 # Database Configuration
 DATABASE_PATH = os.getenv("DATABASE_PATH", "bot_database.db")
+BACKUP_DIR = os.getenv("BACKUP_DIR", "").strip()
 
 # Monitoring Configuration
 MONITORING_INTERVAL = int(os.getenv("MONITORING_INTERVAL", "600"))  # 10 minutes in seconds
