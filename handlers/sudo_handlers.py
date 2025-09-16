@@ -3915,41 +3915,78 @@ async def order_approve(callback: CallbackQuery):
         if not admin:
             await callback.answer("پنل مقصد تمدید یافت نشد.", show_alert=True)
             return
-        delta_traffic = int(o.get("delta_traffic_bytes") or 0)
-        delta_time = int(o.get("delta_time_seconds") or 0)
-        delta_users = int(o.get("delta_users") or 0)
-        new_fields = {}
-        if delta_traffic:
-            new_fields["max_total_traffic"] = (admin.max_total_traffic or 0) + delta_traffic
-        if delta_time:
-            new_fields["max_total_time"] = (admin.max_total_time or 0) + delta_time
-        if delta_users:
-            new_fields["max_users"] = (admin.max_users or 0) + delta_users
-        if not new_fields:
-            await callback.answer("مقادیر تمدید نامعتبر است.", show_alert=True)
+        apply_as_reset = bool(o.get("apply_as_reset"))
+        if apply_as_reset:
+            # Reset limits to the selected plan's values
+            plan = await db.get_plan_by_id(int(o.get("plan_id"))) if o.get("plan_id") else None
+            if not plan:
+                await callback.answer("پلن انتخابی برای ریست یافت نشد.", show_alert=True)
+                return
+            from datetime import datetime as _dt
+            now = _dt.utcnow()
+            new_fields = {
+                "max_total_traffic": (plan.traffic_limit_bytes or 0),
+                "max_total_time": (plan.time_limit_seconds if plan.time_limit_seconds is not None else (36500 * 24 * 60 * 60)),
+                "max_users": (plan.max_users if plan.max_users is not None else 1000000),
+                "validity_days": ((plan.time_limit_seconds // 86400) if plan.time_limit_seconds else 36500),
+                "origin_plan_id": plan.id,
+                "created_at": now,
+            }
+            ok_update = await db.update_admin(admin.id, **new_fields)
+            if not ok_update:
+                await callback.answer("خطا در اعمال تمدید (ریست).", show_alert=True)
+                return
+            await db.update_order(oid, status="approved", approved_by=callback.from_user.id)
+            # Notify user
+            try:
+                bot = callback.bot
+                lines = [
+                    "✅ تمدید کامل اعمال شد (ریست محدودیت‌ها).",
+                    f"📦 پلن جدید: {plan.name}",
+                ]
+                await bot.send_message(chat_id=o['user_id'], text="\n".join(lines))
+            except Exception as e:
+                logger.error(f"Failed to notify user {o['user_id']} after reset-renew approve: {e}")
+            await callback.message.edit_text("✅ سفارش تایید و تمدید کامل اعمال شد.")
+            await callback.answer()
             return
-        ok_update = await db.update_admin(admin.id, **new_fields)
-        if not ok_update:
-            await callback.answer("خطا در اعمال تمدید.", show_alert=True)
-            return
-        await db.update_order(oid, status="approved", approved_by=callback.from_user.id)
-        # Notify user
-        try:
-            from utils.notify import format_traffic_size, format_time_duration
-            bot = callback.bot
-            lines = ["✅ تمدید اعمال شد.", ""]
+        else:
+            # Incremental renewal behavior (existing)
+            delta_traffic = int(o.get("delta_traffic_bytes") or 0)
+            delta_time = int(o.get("delta_time_seconds") or 0)
+            delta_users = int(o.get("delta_users") or 0)
+            new_fields = {}
             if delta_traffic:
-                lines.append(f"📦 افزایش ترافیک: +{await format_traffic_size(delta_traffic)}")
+                new_fields["max_total_traffic"] = (admin.max_total_traffic or 0) + delta_traffic
             if delta_time:
-                lines.append(f"⏱️ افزایش زمان: +{await format_time_duration(delta_time)}")
+                new_fields["max_total_time"] = (admin.max_total_time or 0) + delta_time
             if delta_users:
-                lines.append(f"👥 افزایش کاربر: +{delta_users}")
-            await bot.send_message(chat_id=o['user_id'], text="\n".join(lines))
-        except Exception as e:
-            logger.error(f"Failed to notify user {o['user_id']} after renewal approve: {e}")
-        await callback.message.edit_text("✅ سفارش تایید و تمدید اعمال شد.")
-        await callback.answer()
-        return
+                new_fields["max_users"] = (admin.max_users or 0) + delta_users
+            if not new_fields:
+                await callback.answer("مقادیر تمدید نامعتبر است.", show_alert=True)
+                return
+            ok_update = await db.update_admin(admin.id, **new_fields)
+            if not ok_update:
+                await callback.answer("خطا در اعمال تمدید.", show_alert=True)
+                return
+            await db.update_order(oid, status="approved", approved_by=callback.from_user.id)
+            # Notify user
+            try:
+                from utils.notify import format_traffic_size, format_time_duration
+                bot = callback.bot
+                lines = ["✅ تمدید اعمال شد.", ""]
+                if delta_traffic:
+                    lines.append(f"📦 افزایش ترافیک: +{await format_traffic_size(delta_traffic)}")
+                if delta_time:
+                    lines.append(f"⏱️ افزایش زمان: +{await format_time_duration(delta_time)}")
+                if delta_users:
+                    lines.append(f"👥 افزایش کاربر: +{delta_users}")
+                await bot.send_message(chat_id=o['user_id'], text="\n".join(lines))
+            except Exception as e:
+                logger.error(f"Failed to notify user {o['user_id']} after renewal approve: {e}")
+            await callback.message.edit_text("✅ سفارش تایید و تمدید اعمال شد.")
+            await callback.answer()
+            return
 
     # New panel purchase flow
     plan = await db.get_plan_by_id(int(o.get("plan_id"))) if o.get("plan_id") else None

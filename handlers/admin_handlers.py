@@ -455,7 +455,7 @@ async def admin_renew_panel(callback: CallbackQuery, state: FSMContext):
         intro = config.MESSAGES.get("renew_intro", "🔄 تمدید/افزایش محدودیت‌ها (تدریجی مجاز)")
     else:
         kb = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="🔁 تمدید کامل پلن", callback_data=f"admin_full_renew_{admin_id}")],
+            [InlineKeyboardButton(text="🔁 تمدید کامل پلن (انتخاب پلن)", callback_data=f"admin_full_renew_{admin_id}")],
             [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="admin_renew")]
         ])
         intro = "🔄 تمدید کامل پلن (پرداخت کل هزینه پلن)"
@@ -470,25 +470,75 @@ async def admin_full_renew(callback: CallbackQuery):
     if not admin or admin.user_id != callback.from_user.id:
         await callback.answer("پنل یافت نشد.", show_alert=True)
         return
-    plan = await db.get_plan_by_id(getattr(admin, 'origin_plan_id', 0) or 0)
-    if not plan:
-        await callback.answer("پلن مبدا یافت نشد.", show_alert=True)
+    # Safeguard: only allow for full-renew-only cases
+    try:
+        override = getattr(admin, 'allow_incremental_renewal', None)
+        if override is not None and override:
+            await callback.answer("تمدید کامل اجباری نیست؛ می‌توانید از افزایش تدریجی استفاده کنید.", show_alert=True)
+            return
+        origin_plan = await db.get_plan_by_id(getattr(admin, 'origin_plan_id', 0) or 0)
+        plan_allows_incremental = bool(getattr(origin_plan, 'allow_incremental_renewal', True)) if origin_plan else True
+        if plan_allows_incremental and override is None:
+            await callback.answer("این پنل محدود به تمدید کامل نیست.", show_alert=True)
+            return
+    except Exception:
+        pass
+    # Show all active plans for selection (full-renew-only flow)
+    plans = await db.get_plans(only_active=True)
+    if not plans:
+        await callback.answer("هیچ پلن فعالی برای تمدید موجود نیست.", show_alert=True)
         return
+    from utils.notify import seconds_to_days
+    lines = ["🔁 تمدید کامل: یک پلن را برای تمدید انتخاب کنید:", ""]
+    for p in plans:
+        traffic_txt = "نامحدود" if p.traffic_limit_bytes is None else f"{await format_traffic_size(p.traffic_limit_bytes)}"
+        time_txt = "نامحدود" if p.time_limit_seconds is None else f"{seconds_to_days(p.time_limit_seconds)} روز"
+        users_txt = "نامحدود" if p.max_users is None else f"{p.max_users} کاربر"
+        price_txt = f"{p.price:,}"
+        lines.append(f"• {p.name}")
+        lines.append(f"  📦 ترافیک: {traffic_txt}")
+        lines.append(f"  ⏱️ زمان: {time_txt}")
+        lines.append(f"  👥 کاربر: {users_txt}")
+        lines.append(f"  💰 قیمت: {price_txt} تومان")
+        lines.append(f"   ➤ برای تمدید با این پلن بزنید: #ID {p.id}")
+        lines.append("—")
+    text = "\n".join(lines).rstrip("—")
+    kb_rows = [
+        [InlineKeyboardButton(text=f"تمدید با #{p.id} - {p.name}", callback_data=f"admin_full_renew_plan_{admin_id}_{p.id}")]
+        for p in plans
+    ]
+    kb_rows.append([InlineKeyboardButton(text=config.BUTTONS["back"], callback_data=f"admin_renew_panel_{admin_id}")])
+    await callback.message.edit_text(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb_rows))
+    await callback.answer()
+
+
+@admin_router.callback_query(F.data.startswith("admin_full_renew_plan_"))
+async def admin_full_renew_plan_selected(callback: CallbackQuery):
+    parts = callback.data.split("_")
+    try:
+        admin_id = int(parts[-2])
+        plan_id = int(parts[-1])
+    except Exception:
+        await callback.answer("درخواست نامعتبر است.", show_alert=True)
+        return
+    admin = await db.get_admin_by_id(admin_id)
+    if not admin or admin.user_id != callback.from_user.id:
+        await callback.answer("پنل یافت نشد.", show_alert=True)
+        return
+    plan = await db.get_plan_by_id(plan_id)
+    if not plan:
+        await callback.answer("پلن انتخابی یافت نشد.", show_alert=True)
+        return
+    # Create renew order flagged as reset (apply_as_reset)
     order_id = await db.add_order(callback.from_user.id, plan_id=plan.id, price_snapshot=plan.price, plan_name_snapshot=f"تمدید کامل - {plan.name}")
     if not order_id:
         await callback.answer("خطا در ثبت سفارش تمدید.", show_alert=True)
         return
-    await db.update_order(
-        order_id,
-        order_type="renew",
-        target_admin_id=admin_id,
-        delta_traffic_bytes=plan.traffic_limit_bytes,
-        delta_time_seconds=plan.time_limit_seconds,
-        delta_users=None
-    )
+    await db.update_order(order_id, order_type="renew", target_admin_id=admin_id, apply_as_reset=1)
+    # Show payment instructions
     cards = await db.get_cards(only_active=True)
     lines = [
-        f"✅ سفارش تمدید کامل ثبت شد.\n\nشناسه سفارش: {order_id}\nپلن: {plan.name}\nقیمت: {plan.price:,} تومان\n",
+        f"✅ سفارش تمدید کامل ثبت شد.\n\nشناسه سفارش: {order_id}\nپلن انتخابی: {plan.name}\nقیمت: {plan.price:,} تومان\n",
         config.MESSAGES["public_payment_instructions"],
         "",
         "کارت‌های فعال:",

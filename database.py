@@ -222,6 +222,7 @@ class Database:
                     status TEXT NOT NULL DEFAULT 'pending',
                     order_type TEXT,
                     target_admin_id INTEGER,
+                    apply_as_reset BOOLEAN,
                     delta_traffic_bytes INTEGER,
                     delta_time_seconds INTEGER,
                     delta_users INTEGER,
@@ -259,6 +260,10 @@ class Database:
                 pass
             try:
                 await db.execute("ALTER TABLE orders ADD COLUMN target_admin_id INTEGER")
+            except aiosqlite.OperationalError:
+                pass
+            try:
+                await db.execute("ALTER TABLE orders ADD COLUMN apply_as_reset BOOLEAN")
             except aiosqlite.OperationalError:
                 pass
             try:
