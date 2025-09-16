@@ -2750,7 +2750,9 @@ async def show_admin_status_page(message_or_callback: Message | CallbackQuery, p
             created_at = getattr(a, 'created_at', None) or _dt.utcnow()
             elapsed_seconds = max(0, int((_dt.utcnow() - created_at).total_seconds()))
             remaining_seconds = max(0, max_time_seconds - elapsed_seconds)
-            remaining_time_txt = await format_time_duration(remaining_seconds)
+            from utils.notify import seconds_to_days as _s2d
+            days_remaining = _s2d(remaining_seconds)
+            remaining_time_txt = f"{days_remaining} روز"
 
         btn_text = f"{panel_name} — {remaining_traffic_txt} — {remaining_time_txt}"
         rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"admin_status_detail_{a.id}_p{page}")])
