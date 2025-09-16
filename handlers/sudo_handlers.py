@@ -55,6 +55,7 @@ class EditPanelStates(StatesGroup):
     waiting_for_traffic_volume = State()
     waiting_for_validity_period = State()
     waiting_for_max_users = State()
+    waiting_for_owner_user_id = State()
     waiting_for_confirmation = State()
 
 class ManageAdminStates(StatesGroup):
@@ -2053,7 +2054,7 @@ async def start_edit_panel(callback: CallbackQuery, state: FSMContext):
         f"📊 **محدودیت‌های فعلی:**\n"
         f"📡 ترافیک: {current_traffic} گیگابایت\n"
         f"⏰ مدت زمان: {current_time} روز\n\n"
-        f"📝 **مرحله ۱ از ۳: ترافیک جدید**\n\n"
+        f"📝 **مرحله ۱ از ۴: ترافیک جدید**\n\n"
         "لطفاً مقدار ترافیک جدید را به گیگابایت وارد کنید یا «نامحدود» بفرستید:\n\n"
         "📋 **مثال:** `500` برای ۵۰۰ گیگابایت یا `نامحدود`",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
@@ -2114,7 +2115,7 @@ async def process_edit_traffic(message: Message, state: FSMContext):
         
         await message.answer(
             f"✅ **ترافیک جدید:** {'نامحدود' if (data and data.get('traffic_unlimited')) else str(traffic_gb) + ' گیگابایت'}\n\n"
-            f"📝 **مرحله ۲ از ۳: مدت زمان جدید**\n\n"
+            f"📝 **مرحله ۲ از ۴: مدت زمان جدید**\n\n"
             f"⏰ **مدت زمان فعلی:** {current_time} روز\n\n"
             "لطفاً مدت زمان جدید را به روز وارد کنید یا «نامحدود» بفرستید:\n\n"
             "📋 **مثال:** `30` برای ۳۰ روز یا `نامحدود`\n"
@@ -2192,7 +2193,7 @@ async def process_edit_time(message: Message, state: FSMContext):
         
         # After time, ask for max users (with unlimited)
         await message.answer(
-            "👥 **مرحله ۳ از ۳: حداکثر کاربر**\n\n"
+            "👥 **مرحله ۳ از ۴: حداکثر کاربر**\n\n"
             "لطفاً حداکثر تعداد کاربر را وارد کنید یا «نامحدود» بفرستید:\n\n"
             "📋 **مثال‌ها:** `100` یا `نامحدود`"
         )
@@ -2251,25 +2252,76 @@ async def process_edit_max_users(message: Message, state: FSMContext):
         validity_days = data.get('validity_days')
         max_users_new = data.get('max_users_new')
         panel_name = admin.admin_name or admin.marzban_username or f"Panel-{admin.id}"
-        confirmation_text = (
-            f"📋 **تأیید نهایی ویرایش پنل**\n\n"
-            f"🏷️ **پنل:** {panel_name}\n"
-            f"👤 **کاربر:** {admin.username or admin.user_id}\n"
-            f"🔐 **نام کاربری مرزبان:** {admin.marzban_username}\n\n"
-            f"📊 **تغییرات:**\n"
-            f"📡 ترافیک: {old_traffic} GB ← {'نامحدود' if (data and data.get('traffic_unlimited')) else str(traffic_gb) + ' GB'}\n"
-            f"⏰ مدت زمان: {old_time} روز ← {'نامحدود' if (data and data.get('validity_unlimited')) else str(validity_days) + ' روز'}\n"
-            f"👥 کاربر: {admin.max_users} ← {'نامحدود' if data.get('users_unlimited') else str(data.get('max_users_new'))}" + ("" if data.get('users_unlimited') else " کاربر") + "\n\n"
-            "❓ آیا از انجام این تغییرات اطمینان دارید؟"
+        await message.answer(
+            "🆔 **مرحله ۴ از ۴: آیدی عددی تلگرام (مالک پنل)**\n\n"
+            "در صورت تمایل، آیدی عددی تلگرام مالک پنل را تغییر دهید.\n"
+            "برای عدم تغییر، عبارت `همان` را بفرستید.\n\n"
+            f"👤 مالک فعلی: {admin.username or admin.user_id}\n"
+            "📋 مثال: 123456789"
         )
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="✅ تأیید", callback_data="confirm_edit_panel")],
-            [InlineKeyboardButton(text="❌ لغو", callback_data="back_to_main")]
-        ])
-        await message.answer(confirmation_text, reply_markup=keyboard)
-        await state.set_state(EditPanelStates.waiting_for_confirmation)
+        await state.set_state(EditPanelStates.waiting_for_owner_user_id)
     except Exception:
         await message.answer("❌ ورودی نامعتبر است. یک عدد صحیح یا «نامحدود» بفرستید:")
+
+
+@sudo_router.message(EditPanelStates.waiting_for_owner_user_id, F.text)
+async def process_edit_owner_user_id(message: Message, state: FSMContext):
+    """Capture new Telegram numeric user ID (panel owner) or keep unchanged."""
+    user_id = message.from_user.id
+    if user_id not in config.SUDO_ADMINS:
+        await message.answer("⛔ شما مجاز به انجام این عمل نیستید.")
+        await state.clear()
+        return
+    raw = (message.text or "").strip()
+    data = await state.get_data()
+    admin_id = data.get('admin_id')
+    admin = await db.get_admin_by_id(admin_id) if admin_id else None
+    if not admin:
+        await message.answer("❌ پنل یافت نشد.")
+        await state.clear()
+        return
+
+    # Determine new owner
+    keep_tokens = ["همان", "بدون تغییر", "بدون تغيير", "same", "unchanged", "no change", "-", "قبلی"]
+    try:
+        if raw.lower() in [t.lower() for t in keep_tokens]:
+            new_owner_user_id = admin.user_id
+        else:
+            new_owner_user_id = int(raw)
+            if new_owner_user_id <= 0:
+                raise ValueError()
+    except Exception:
+        await message.answer("❌ فرمت آیدی عددی نامعتبر است. یک عدد صحیح وارد کنید یا بنویسید «همان».")
+        return
+
+    await state.update_data(new_owner_user_id=new_owner_user_id)
+
+    # Build final confirmation
+    from utils.notify import bytes_to_gb, seconds_to_days
+    old_traffic = bytes_to_gb(admin.max_total_traffic)
+    old_time = seconds_to_days(admin.max_total_time)
+    traffic_gb = data.get('traffic_gb')
+    validity_days = data.get('validity_days')
+    users_unlimited = data.get('users_unlimited')
+    max_users_new = data.get('max_users_new')
+    panel_name = admin.admin_name or admin.marzban_username or f"Panel-{admin.id}"
+    confirmation_text = (
+        f"📋 **تأیید نهایی ویرایش پنل**\n\n"
+        f"🏷️ **پنل:** {panel_name}\n"
+        f"🔐 **نام کاربری مرزبان:** {admin.marzban_username}\n\n"
+        f"📊 **تغییرات:**\n"
+        f"📡 ترافیک: {old_traffic} GB ← {'نامحدود' if (data and data.get('traffic_unlimited')) else str(traffic_gb) + ' GB'}\n"
+        f"⏰ مدت زمان: {old_time} روز ← {'نامحدود' if (data and data.get('validity_unlimited')) else str(validity_days) + ' روز'}\n"
+        f"👥 کاربر: {admin.max_users} ← {'نامحدود' if users_unlimited else (str(max_users_new) + ' کاربر')}\n"
+        f"🆔 مالک پنل: {admin.user_id} ← {new_owner_user_id}\n\n"
+        "❓ آیا از انجام این تغییرات اطمینان دارید؟"
+    )
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ تأیید", callback_data="confirm_edit_panel")],
+        [InlineKeyboardButton(text="❌ لغو", callback_data="back_to_main")]
+    ])
+    await message.answer(confirmation_text, reply_markup=keyboard)
+    await state.set_state(EditPanelStates.waiting_for_confirmation)
 
 
 @sudo_router.callback_query(F.data == "confirm_edit_panel")
@@ -2286,6 +2338,9 @@ async def confirm_edit_panel(callback: CallbackQuery, state: FSMContext):
         admin_id = data.get('admin_id')
         traffic_gb = data.get('traffic_gb')
         validity_days = data.get('validity_days')
+        users_unlimited = data.get('users_unlimited')
+        max_users_new = data.get('max_users_new')
+        new_owner_user_id = data.get('new_owner_user_id')
         
         if admin_id is None or (traffic_gb is None and not data.get('traffic_unlimited')) or (validity_days is None and not data.get('validity_unlimited')):
             await callback.answer("داده‌های ناکافی", show_alert=True)
@@ -2299,18 +2354,22 @@ async def confirm_edit_panel(callback: CallbackQuery, state: FSMContext):
         max_total_time = 0 if data.get('validity_unlimited') else days_to_seconds(validity_days)
         
         # Determine users cap (use 1,000,000 sentinel for unlimited)
-        if data.get('users_unlimited'):
+        if users_unlimited:
             new_max_users = 1000000
         else:
             new_max_users = max_users_new if (max_users_new is not None) else None
 
         # Update in database
-        success = await db.update_admin(
-            admin_id, 
-            max_total_traffic=max_total_traffic,
-            max_total_time=max_total_time,
-            **({"max_users": new_max_users} if new_max_users is not None else {})
-        )
+        update_kwargs = {
+            "max_total_traffic": max_total_traffic,
+            "max_total_time": max_total_time,
+        }
+        if new_max_users is not None:
+            update_kwargs["max_users"] = new_max_users
+        if isinstance(new_owner_user_id, int) and new_owner_user_id > 0:
+            update_kwargs["user_id"] = new_owner_user_id
+
+        success = await db.update_admin(admin_id, **update_kwargs)
         
         if success:
             admin = await db.get_admin_by_id(admin_id)
@@ -2321,18 +2380,22 @@ async def confirm_edit_panel(callback: CallbackQuery, state: FSMContext):
                 f"📊 **محدودیت‌های جدید:**\n"
                 f"📡 ترافیک: {'نامحدود' if max_total_traffic == 0 else str(traffic_gb) + ' گیگابایت'}\n"
                 f"⏰ مدت زمان: {'نامحدود' if max_total_time == 0 else str(validity_days) + ' روز'}\n"
-                f"👥 کاربر: {'نامحدود' if (new_max_users is not None and new_max_users >= 1000000) else (str(new_max_users) + ' کاربر' if new_max_users is not None else 'بدون تغییر')}\n\n"
-                f"👤 کاربر: {admin.username or admin.user_id}\n"
+                f"👥 کاربر: {'نامحدود' if (new_max_users is not None and new_max_users >= 1000000) else (str(new_max_users) + ' کاربر' if new_max_users is not None else 'بدون تغییر')}\n"
+                f"🆔 مالک پنل: {(admin.user_id)} → {(new_owner_user_id if new_owner_user_id else admin.user_id)}\n\n"
+                f"👤 کاربر: {admin.username or (new_owner_user_id if new_owner_user_id else admin.user_id)}\n"
                 f"🔐 نام کاربری مرزبان: {admin.marzban_username}",
                 reply_markup=get_sudo_keyboard()
             )
             
             # Log the change
             from models.schemas import LogModel
+            log_details = f"Panel {admin_id} limits updated: Traffic={'unlimited' if max_total_traffic==0 else str(traffic_gb)+'GB'}, Time={'unlimited' if max_total_time==0 else str(validity_days)+'days'}"
+            if isinstance(new_owner_user_id, int) and new_owner_user_id != admin.user_id:
+                log_details += f", Owner: {admin.user_id}→{new_owner_user_id}"
             log = LogModel(
-                admin_user_id=admin.user_id,
+                admin_user_id=(new_owner_user_id if new_owner_user_id else admin.user_id),
                 action="panel_limits_edited",
-                details=f"Panel {admin_id} limits updated: Traffic={traffic_gb}GB, Time={validity_days}days"
+                details=log_details
             )
             await db.add_log(log)
             
