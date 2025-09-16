@@ -125,5 +125,9 @@ BUTTONS = {
     "backup_menu": "🗄️ بکاپ",
     "backup_now": "📦 بکاپ الان",
     "backup_schedule": "⏱️ زمان‌بندی بکاپ",
-    "backup_restore": "♻️ ریستور بکاپ"
+    "backup_restore": "♻️ ریستور بکاپ",
+    # Broadcast
+    "broadcast_menu": "📣 پیام‌رسانی",
+    "broadcast_all": "📣 ارسال به همه ادمین‌ها",
+    "broadcast_active": "✅ ارسال به ادمین‌های فعال"
 }

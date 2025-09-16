@@ -83,6 +83,10 @@ class LoginURLStates(StatesGroup):
     waiting_for_url = State()
 
 
+class BroadcastStates(StatesGroup):
+    waiting_for_text = State()
+
+
 sudo_router = Router()
 
 
@@ -118,6 +122,10 @@ def get_sudo_keyboard() -> InlineKeyboardMarkup:
             InlineKeyboardButton(text="⚙️ تنظیمات", callback_data="sudo_menu_settings"),
             InlineKeyboardButton(text=config.BUTTONS["backup_menu"], callback_data="sudo_menu_backup"),
             InlineKeyboardButton(text="📊 گزارشات", callback_data="sudo_menu_reports")
+        ],
+        # Row 3: Broadcast
+        [
+            InlineKeyboardButton(text=config.BUTTONS["broadcast_menu"], callback_data="sudo_menu_broadcast")
         ]
     ])
 
@@ -501,6 +509,124 @@ async def sudo_menu_settings(callback: CallbackQuery):
         [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
     ])
     await callback.message.edit_text("⚙️ تنظیمات:", reply_markup=kb)
+    await callback.answer()
+
+
+@sudo_router.callback_query(F.data == "sudo_menu_broadcast")
+async def sudo_menu_broadcast(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=config.BUTTONS["broadcast_all"], callback_data="broadcast_all")],
+        [InlineKeyboardButton(text=config.BUTTONS["broadcast_active"], callback_data="broadcast_active")],
+        [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]
+    ])
+    await callback.message.edit_text("📣 پیام‌رسانی:", reply_markup=kb)
+    await callback.answer()
+
+
+@sudo_router.callback_query(F.data == "broadcast_all")
+async def broadcast_all_selected(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    await state.update_data(broadcast_target="all")
+    await state.set_state(BroadcastStates.waiting_for_text)
+    await callback.message.edit_text(
+        "✍️ متن پیام همگانی را ارسال کنید:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_broadcast")]])
+    )
+    await callback.answer()
+
+
+@sudo_router.callback_query(F.data == "broadcast_active")
+async def broadcast_active_selected(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    await state.update_data(broadcast_target="active")
+    await state.set_state(BroadcastStates.waiting_for_text)
+    await callback.message.edit_text(
+        "✍️ متن پیام برای ادمین‌های دارای پنل فعال را ارسال کنید:",
+        reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_broadcast")]])
+    )
+    await callback.answer()
+
+
+@sudo_router.message(BroadcastStates.waiting_for_text, F.text)
+async def broadcast_receive_text(message: Message, state: FSMContext):
+    if message.from_user.id not in config.SUDO_ADMINS:
+        return
+    data = await state.get_data()
+    target = data.get("broadcast_target", "all")
+    only_active = (target == "active")
+    try:
+        recipients = await db.get_distinct_admin_user_ids(only_active=only_active)
+    except Exception:
+        recipients = []
+    count = len(recipients)
+    if count == 0:
+        await state.clear()
+        await message.answer(
+            "❌ هیچ گیرنده‌ای یافت نشد.",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_broadcast")]])
+        )
+        return
+    await state.update_data(broadcast_text=message.text.strip())
+    audience_txt = ("فقط پنل‌های فعال" if only_active else "همه ادمین‌ها")
+    preview = (
+        "📣 پیش‌نمایش پیام:\n\n"
+        f"{message.text}\n\n"
+        f"👥 گیرندگان: {count} نفر ({audience_txt})\n\n"
+        "برای ارسال تایید کنید."
+    )
+    kb = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="✅ ارسال", callback_data="broadcast_confirm")],
+        [InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="sudo_menu_broadcast")]
+    ])
+    await message.answer(preview, reply_markup=kb)
+
+
+@sudo_router.callback_query(F.data == "broadcast_confirm")
+async def broadcast_confirm(callback: CallbackQuery, state: FSMContext):
+    if callback.from_user.id not in config.SUDO_ADMINS:
+        await callback.answer("غیرمجاز", show_alert=True)
+        return
+    data = await state.get_data()
+    text = (data or {}).get("broadcast_text")
+    target = (data or {}).get("broadcast_target", "all")
+    if not text:
+        await callback.answer("متن پیام یافت نشد.", show_alert=True)
+        return
+    only_active = (target == "active")
+    try:
+        recipients = await db.get_distinct_admin_user_ids(only_active=only_active)
+    except Exception:
+        recipients = []
+    success = 0
+    failed = 0
+    for uid in recipients:
+        try:
+            await callback.bot.send_message(chat_id=uid, text=text)
+            success += 1
+            await asyncio.sleep(0.03)
+        except Exception:
+            failed += 1
+    # Log the broadcast
+    try:
+        log = LogModel(admin_user_id=None, action="broadcast_sent", details=f"target={target}, recipients={len(recipients)}, success={success}, failed={failed}")
+        await db.add_log(log)
+    except Exception:
+        pass
+    await state.clear()
+    summary = (
+        "📣 ارسال انجام شد.\n\n"
+        f"✅ موفق: {success}\n"
+        f"❌ ناموفق: {failed}\n"
+        f"👥 کل: {len(recipients)}"
+    )
+    await callback.message.edit_text(summary, reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=config.BUTTONS["back"], callback_data="back_to_main")]]))
     await callback.answer()
 
 @sudo_router.callback_query(F.data == "sudo_menu_backup")
