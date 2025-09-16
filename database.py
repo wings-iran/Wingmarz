@@ -433,6 +433,25 @@ class Database:
             print(f"Error getting all admins: {e}")
             return []
 
+    async def get_distinct_admin_user_ids(self, only_active: bool = False) -> List[int]:
+        """Return distinct Telegram user IDs of admins. Optionally filter by active panels.
+
+        When a user has multiple panels, they will appear only once in the result.
+        """
+        try:
+            async with aiosqlite.connect(self.db_path) as db_conn:
+                db_conn.row_factory = aiosqlite.Row
+                if only_active:
+                    query = "SELECT DISTINCT user_id FROM admins WHERE is_active = 1"
+                else:
+                    query = "SELECT DISTINCT user_id FROM admins"
+                async with db_conn.execute(query) as cursor:
+                    rows = await cursor.fetchall()
+                    return [int(r["user_id"]) for r in rows]
+        except Exception as e:
+            print(f"Error getting distinct admin user ids: {e}")
+            return []
+
     async def update_admin(self, admin_id: int, **kwargs) -> bool:
         """Update admin data by admin ID.
 
