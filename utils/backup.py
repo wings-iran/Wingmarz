@@ -65,8 +65,50 @@ async def create_backup_zip() -> Path:
     - bot.log (if exists in CWD)
     - logs directory (./logs or /app/logs if exists)
     """
-    db_path = Path(config.DATABASE_PATH).resolve()
-    base_dir = db_path.parent if db_path.exists() else Path.cwd()
+    # Detect actual database path and a reasonable base directory
+    def _detect_db_and_base() -> tuple[Path, Path]:
+        try:
+            configured = (getattr(config, "DATABASE_PATH", "") or "").strip()
+        except Exception:
+            configured = ""
+        candidates: list[Path] = []
+        if configured:
+            try:
+                candidates.append(Path(configured).expanduser().resolve())
+            except Exception:
+                candidates.append(Path(configured))
+        # Common locations
+        common_relatives = [
+            Path("data") / "bot_database.db",
+            Path("bot_database.db"),
+        ]
+        common_absolutes = [
+            Path("/app/data/bot_database.db"),
+        ]
+        cwd = Path.cwd()
+        for rel in common_relatives:
+            try:
+                candidates.append((cwd / rel).resolve())
+            except Exception:
+                candidates.append(cwd / rel)
+        candidates.extend(common_absolutes)
+
+        # Pick the first existing file
+        for cand in candidates:
+            try:
+                if cand.exists() and cand.is_file():
+                    return cand, cand.parent
+            except Exception:
+                continue
+        # Fallback: use configured (may not exist) and cwd as base
+        fallback = candidates[0] if candidates else (cwd / "bot_database.db")
+        try:
+            fallback = fallback.resolve()
+        except Exception:
+            pass
+        return fallback, (fallback.parent if fallback.parent.exists() else cwd)
+
+    db_path, base_dir = _detect_db_and_base()
 
     timestamp = datetime.utcnow().strftime("%Y%m%d-%H%M%S")
     backup_name = f"backup-{timestamp}.zip"
@@ -93,6 +135,12 @@ async def create_backup_zip() -> Path:
                 if base_dir.name.lower() in ("data", "storage"):
                     # Exclude the backups output directory and any prior backup zips to avoid recursive growth
                     exclude: set[Path] = {backup_zip_path}
+                    # Avoid duplicating the database file inside the directory snapshot
+                    try:
+                        if db_path.exists():
+                            exclude.add(db_path)
+                    except Exception:
+                        pass
                     try:
                         # Only add output_dir to exclusions if it's inside base_dir
                         if _path_norm(base_dir) in _path_norm(output_dir).parents or _path_norm(base_dir) == _path_norm(output_dir):

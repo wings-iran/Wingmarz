@@ -575,6 +575,7 @@ async def backup_restore_receive(message: Message, state: FSMContext):
         from pathlib import Path
         import zipfile
         import asyncio
+        import os
         # Create download path
         target_dir = Path(config.DATABASE_PATH).resolve().parent
         target_dir.mkdir(parents=True, exist_ok=True)
@@ -621,10 +622,38 @@ async def backup_restore_receive(message: Message, state: FSMContext):
         await state.clear()
         # Optional: instruct user to restart container/service if needed
         await message.answer("در صورت اجرای دائمی، برای اطمینان می‌توانید سرویس را ری‌استارت کنید.")
+        # Cleanup uploaded zip and temp file
+        try:
+            try:
+                local_zip.unlink(missing_ok=True)
+            except TypeError:
+                # Fallback for older Python
+                if local_zip.exists():
+                    local_zip.unlink()
+        except Exception:
+            pass
+        try:
+            try:
+                extract_tmp.unlink(missing_ok=True)
+            except TypeError:
+                if extract_tmp.exists():
+                    extract_tmp.unlink()
+        except Exception:
+            pass
     except Exception as e:
         logger.error(f"Restore failed: {e}")
         await message.answer("❌ خطا در ریستور بکاپ.")
         await state.clear()
+        # Cleanup uploaded zip on failure as well
+        try:
+            if 'local_zip' in locals():
+                try:
+                    local_zip.unlink(missing_ok=True)
+                except TypeError:
+                    if local_zip.exists():
+                        local_zip.unlink()
+        except Exception:
+            pass
 
 class BackupScheduleStates(StatesGroup):
     waiting_input = State()
