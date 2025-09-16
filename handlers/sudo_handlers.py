@@ -2596,7 +2596,7 @@ async def show_admin_status_page(message_or_callback: Message | CallbackQuery, p
     rows = []
     for a in page_admins:
         panel_name = a.marzban_username or a.admin_name or f"Panel {a.id}"
-        # Use sudo-based admin usage cumulative for accurate traffic
+        # Fetch cumulative used traffic for this admin (monotonic)
         try:
             used_bytes = await marzban_api.get_admin_usage_cumulative(a.marzban_username or a.username or str(a.user_id))
         except Exception:
@@ -2606,8 +2606,27 @@ async def show_admin_status_page(message_or_callback: Message | CallbackQuery, p
                 used_bytes = int(getattr(report, 'current_total_traffic', 0) or 0) if report else 0
             except Exception:
                 used_bytes = 0
-        used_txt = await format_traffic_size(used_bytes)
-        btn_text = f"{panel_name} — {used_txt}"
+
+        # Remaining traffic (handle unlimited when max_total_traffic == 0)
+        max_traffic = int(getattr(a, 'max_total_traffic', 0) or 0)
+        if max_traffic == 0:
+            remaining_traffic_txt = "نامحدود"
+        else:
+            remaining_traffic = max(0, max_traffic - int(used_bytes or 0))
+            remaining_traffic_txt = await format_traffic_size(remaining_traffic)
+
+        # Remaining time (handle unlimited when max_total_time == 0 or very large)
+        from datetime import datetime as _dt
+        max_time_seconds = int(getattr(a, 'max_total_time', 0) or 0)
+        if max_time_seconds == 0 or max_time_seconds >= (36500 * 24 * 60 * 60):
+            remaining_time_txt = "نامحدود"
+        else:
+            created_at = getattr(a, 'created_at', None) or _dt.utcnow()
+            elapsed_seconds = max(0, int((_dt.utcnow() - created_at).total_seconds()))
+            remaining_seconds = max(0, max_time_seconds - elapsed_seconds)
+            remaining_time_txt = await format_time_duration(remaining_seconds)
+
+        btn_text = f"{panel_name} — {remaining_traffic_txt} — {remaining_time_txt}"
         rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"admin_status_detail_{a.id}_p{page}")])
 
     nav_row = []
