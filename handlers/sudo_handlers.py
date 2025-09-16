@@ -2733,13 +2733,14 @@ async def show_admin_status_page(message_or_callback: Message | CallbackQuery, p
             except Exception:
                 used_bytes = 0
 
-        # Remaining traffic (handle unlimited when max_total_traffic == 0)
+        # Remaining traffic in GB (floored). Handle unlimited when max_total_traffic == 0
         max_traffic = int(getattr(a, 'max_total_traffic', 0) or 0)
         if max_traffic == 0:
-            remaining_traffic_txt = "نامحدود"
+            remaining_traffic_gb_txt = "نامحدود"
         else:
             remaining_traffic = max(0, max_traffic - int(used_bytes or 0))
-            remaining_traffic_txt = await format_traffic_size(remaining_traffic)
+            from utils.notify import bytes_to_gb as _b2g
+            remaining_traffic_gb_txt = f"{int(_b2g(remaining_traffic))}GB"
 
         # Remaining time (handle unlimited when max_total_time == 0 or very large)
         from datetime import datetime as _dt
@@ -2754,7 +2755,17 @@ async def show_admin_status_page(message_or_callback: Message | CallbackQuery, p
             days_remaining = _s2d(remaining_seconds)
             remaining_time_txt = f"{days_remaining} روز"
 
-        btn_text = f"{panel_name} — {remaining_traffic_txt} — {remaining_time_txt}"
+        # Users: use latest usage report for current users (fallback to 0). Show used/max (max may be unlimited)
+        try:
+            report = await db.get_latest_usage_report(a.user_id)
+            used_users = int(getattr(report, 'current_users', 0) or 0) if report else 0
+        except Exception:
+            used_users = 0
+        max_users_val = int(getattr(a, 'max_users', 0) or 0)
+        max_users_txt = "نامحدود" if (max_users_val == 0 or max_users_val >= 1000000) else str(max_users_val)
+
+        # Compose button text: Users — Remaining Traffic (GB) — Remaining Time (days)
+        btn_text = f"{panel_name} — 👥 {used_users}/{max_users_txt} — 📦 {remaining_traffic_gb_txt} — ⏱️ {remaining_time_txt}"
         rows.append([InlineKeyboardButton(text=btn_text, callback_data=f"admin_status_detail_{a.id}_p{page}")])
 
     nav_row = []
